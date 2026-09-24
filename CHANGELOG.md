@@ -1,5 +1,12 @@
 # agent-workplace
 
+## 0.1.1
+
+### Patch Changes
+
+- Point the CLI to its standalone source repository and align its package
+  notices, documentation and trusted publication with that repository.
+
 ## 0.1.0
 
 ### Minor Changes

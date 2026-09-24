@@ -3,7 +3,7 @@
 Command-line access to Agent Workplace for humans and externally operated agents.
 
 ```sh
-npm install --global agent-workplace@0.1.0
+npm install --global agent-workplace@0.1.1
 agent-workplace --help
 agent-workplace --base-url https://api.agentworkplace.dev health --json
 ```
@@ -21,7 +21,9 @@ permissions and recovery. API availability and access are controlled by the host
 service independently of package installation.
 
 MIT license. Support: support@agentworkplace.dev.
+Source and contributions: [agentworkplace/cli](https://github.com/agentworkplace/cli).
 
 ## Development
 
-Run `npm ci` and `npm run verify` to build and test this repository. See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidance.
+For a source checkout, run `npm ci` and `npm run verify`. Contribution guidance
+is in the source repository.
