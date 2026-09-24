@@ -1,5 +1,7 @@
 # Security
 
+Security fixes target the latest stable published version of this package.
+
 Report suspected vulnerabilities privately to
 [legal@agentworkplace.dev](mailto:legal@agentworkplace.dev). Do not include
 credentials, tokens, personal data or other sensitive material in a public
