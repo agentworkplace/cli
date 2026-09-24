@@ -1,0 +1,69 @@
+{
+  "name": "agent-workplace",
+  "version": "0.1.0",
+  "type": "module",
+  "private": false,
+  "description": "Command-line client for Agent Workplace",
+  "license": "MIT",
+  "author": "Clevifai, Inc.",
+  "homepage": "https://docs.agentworkplace.dev",
+  "bugs": {
+    "email": "support@agentworkplace.dev"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/agentworkplace/cli.git"
+  },
+  "engines": {
+    "node": ">=22.12 <23 || >=24 <25"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE",
+    "NOTICE",
+    "CHANGELOG.md"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org"
+  },
+  "bin": {
+    "agent-workplace": "./dist/index.js"
+  },
+  "exports": {
+    "./program": {
+      "types": "./dist/program.d.ts",
+      "import": "./dist/program.js",
+      "default": "./dist/program.js"
+    }
+  },
+  "scripts": {
+    "build": "node node_modules/typescript7/bin/tsc -p tsconfig.json && node scripts/mark-executable.mjs",
+    "lint": "eslint . --max-warnings 0",
+    "check-types": "node node_modules/typescript7/bin/tsc --noEmit -p tsconfig.test.json",
+    "test": "vitest run",
+    "test:runtime": "node tests/runtime.smoke.mjs",
+    "pack:release": "node scripts/pack.mjs",
+    "install:release": "node scripts/validate-archive.mjs",
+    "verify": "npm run lint && npm run check-types && npm test && npm run build && npm run test:runtime",
+    "prepublishOnly": "node scripts/refuse-source-publish.mjs"
+  },
+  "dependencies": {
+    "commander": "15.0.0",
+    "proper-lockfile": "4.1.2",
+    "@agent-workplace/sdk": "^0.1.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "@types/node": "24.13.3",
+    "@types/proper-lockfile": "4.1.4",
+    "eslint": "10.10.0",
+    "eslint-config-prettier": "10.1.8",
+    "globals": "17.12.0",
+    "typescript": "npm:@typescript/typescript6@6.0.2",
+    "typescript7": "npm:typescript@7.0.2",
+    "typescript-eslint": "8.69.0",
+    "vitest": "4.1.11"
+  }
+}
