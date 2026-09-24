@@ -1,0 +1,70 @@
+name: Publish reviewed package
+
+on:
+  workflow_dispatch:
+    inputs:
+      reviewed_sha:
+        description: Full reviewed public source commit on protected main
+        required: true
+        type: string
+      version:
+        description: Exact unused npm package version
+        required: true
+        type: string
+      tag:
+        description: npm distribution tag
+        required: true
+        type: choice
+        options:
+          - latest
+          - next
+
+permissions:
+  contents: read
+
+concurrency:
+  group: npm-publication
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: github.repository_owner == 'agentworkplace' && github.ref == 'refs/heads/main' && github.run_attempt == 1
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      REVIEWED_SHA: ${{ inputs.reviewed_sha }}
+      RELEASE_VERSION: ${{ inputs.version }}
+      RELEASE_TAG: ${{ inputs.tag }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "24"
+          package-manager-cache: false
+      - name: Install trusted-publication npm and frozen dependencies
+        run: |
+          npm install --prefix "$RUNNER_TEMP/publication-npm" npm@11.11.0 --ignore-scripts --no-audit --no-fund
+          echo "$RUNNER_TEMP/publication-npm/node_modules/.bin" >> "$GITHUB_PATH"
+          npm ci --ignore-scripts --no-audit --no-fund
+      - name: Verify, build and inspect the exact archive
+        run: |
+          npm run verify
+          npm run pack:release
+          npm run install:release
+      - name: Retain the reviewed archive before publication
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: npm-${{ inputs.version }}-${{ github.sha }}
+          path: tmp/release/
+          if-no-files-found: error
+          retention-days: 14
+      - name: Publish from this reviewed public source commit
+        run: node scripts/publish.mjs
+        env:
+          NPM_CONFIG_PROVENANCE: "true"
