@@ -1,6 +1,7 @@
 import { AgentWorkplace } from "@agent-workplace/sdk";
 import type { HealthResponse } from "@agent-workplace/sdk";
 
+import { productionApiOrigin } from "../client.js";
 import { CliConfigurationError } from "../errors.js";
 import { writeHealthResult } from "../output.js";
 import type { WriteOutput } from "../output.js";
@@ -24,17 +25,12 @@ const defaultCreateClient: CreateHealthClient = (baseUrl) =>
 export async function executeHealth(
   options: ExecuteHealthOptions,
 ): Promise<void> {
-  if (options.baseUrl === undefined) {
-    throw new CliConfigurationError(
-      "API base URL is required. Pass --base-url or set AGENT_WORKPLACE_API_URL.",
-    );
-  }
-
+  const baseUrl = options.baseUrl ?? productionApiOrigin;
   const createClient = options.createClient ?? defaultCreateClient;
   let client: HealthClient;
 
   try {
-    client = createClient(options.baseUrl);
+    client = createClient(baseUrl);
   } catch (error) {
     if (error instanceof TypeError) {
       throw new CliConfigurationError(error.message, { cause: error });

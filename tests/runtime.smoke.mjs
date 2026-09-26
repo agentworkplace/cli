@@ -46,13 +46,12 @@ try {
     [
       process.argv[2] ??
         fileURLToPath(new URL("../dist/index.js", import.meta.url)),
-      "--base-url",
-      baseUrl,
       "health",
       "--json",
     ],
     {
       stdio: ["ignore", "pipe", "pipe"],
+      env: { ...process.env, AGENT_WORKPLACE_API_URL: baseUrl },
       timeout: 10_000,
       killSignal: "SIGKILL",
     },

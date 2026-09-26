@@ -1,12 +1,16 @@
 import { accessOrigin } from "../credentials.js";
 import { CliConfigurationError } from "../errors.js";
-import { productClient, type ProductClientOptions } from "../client.js";
+import {
+  productClient,
+  productionApiOrigin,
+  type ProductClientOptions,
+} from "../client.js";
 import type { WriteOutput } from "../output.js";
 import { readPrivateReceipt } from "../private-receipt.js";
 
 const invalid = () =>
   new CliConfigurationError(
-    "Expected a private owner email receipt for the selected API origin",
+    "Expected a private owner email receipt for the selected API origin; set AGENT_WORKPLACE_API_URL for another environment",
   );
 
 export async function executeOwnerEmailStatus(
@@ -18,11 +22,7 @@ export async function executeOwnerEmailStatus(
     write: WriteOutput;
   },
 ) {
-  if (!options.baseUrl)
-    throw new CliConfigurationError(
-      "API base URL is required. Pass --base-url or set AGENT_WORKPLACE_API_URL.",
-    );
-  const origin = accessOrigin(options.baseUrl);
+  const origin = accessOrigin(options.baseUrl ?? productionApiOrigin);
   const text = await readPrivateReceipt(
     options.receipt,
     options.input,

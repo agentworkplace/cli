@@ -164,7 +164,10 @@ export async function executeInvitationPreview(
     store.read(),
   );
   if (!saved) throw new CliConfigurationError("Invitation file does not exist");
-  if (options.baseUrl && accessOrigin(options.baseUrl) !== saved.origin)
+  if (
+    options.baseUrl !== undefined &&
+    accessOrigin(options.baseUrl) !== saved.origin
+  )
     throw new CliConfigurationError("Invitation belongs to another API origin");
   output(
     await productClient(options, saved.origin).previewInvitation({
@@ -229,7 +232,10 @@ export async function executeInvitationJoin(
         throw new CliConfigurationError(
           "Saved attempt belongs to another invitation",
         );
-      if (options.baseUrl && accessOrigin(options.baseUrl) !== attempt.origin)
+      if (
+        options.baseUrl !== undefined &&
+        accessOrigin(options.baseUrl) !== attempt.origin
+      )
         throw new CliConfigurationError(
           "Saved invitation belongs to another API origin",
         );

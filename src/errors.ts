@@ -1,4 +1,4 @@
-import { AgentWorkplaceError } from "@agent-workplace/sdk";
+import { AgentWorkplaceError, DocumentationError } from "@agent-workplace/sdk";
 
 export class CliConfigurationError extends Error {
   constructor(message: string, options?: ErrorOptions) {
@@ -23,6 +23,14 @@ export function presentError(error: unknown): PresentedError {
       message: error.message,
       status: error.status,
       ...(error.code === undefined ? {} : { code: error.code }),
+    };
+  }
+
+  if (error instanceof DocumentationError) {
+    return {
+      message: error.message,
+      ...(error.status === undefined ? {} : { status: error.status }),
+      code: error.code,
     };
   }
 

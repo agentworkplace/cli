@@ -4,7 +4,7 @@ import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { AgentWorkplace, AgentWorkplaceError } from "@agent-workplace/sdk";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { withInvitation } from "../src/invitation-file.js";
 import { withCredentials } from "../src/credentials.js";
 import { runCli } from "../src/program.js";
@@ -12,8 +12,12 @@ import { runCli } from "../src/program.js";
 vi.mock("node:fs/promises", { spy: true });
 
 const directories: string[] = [];
+beforeEach(() => {
+  vi.stubEnv("AGENT_WORKPLACE_API_URL", undefined);
+});
 afterEach(async () => {
   vi.restoreAllMocks();
+  vi.unstubAllEnvs();
   for (const directory of directories.splice(0))
     await rm(directory, { recursive: true, force: true });
 });
@@ -348,11 +352,10 @@ describe("private invitation CLI journey", () => {
   });
   it("rejects origin and credential-file collisions before sending credentials or proofs", async () => {
     const f = await fixture();
+    vi.stubEnv("AGENT_WORKPLACE_API_URL", "https://different.example.test");
     expect(
       (
         await f.run([
-          "--base-url",
-          "https://different.example.test",
           "invitations",
           "join",
           "--invitation-file",
@@ -361,6 +364,19 @@ describe("private invitation CLI journey", () => {
         ])
       ).code,
     ).toBe(1);
+    vi.stubEnv("AGENT_WORKPLACE_API_URL", "");
+    expect(
+      (
+        await f.run([
+          "invitations",
+          "join",
+          "--invitation-file",
+          f.invitationFile,
+          "--json",
+        ])
+      ).code,
+    ).toBe(1);
+    vi.stubEnv("AGENT_WORKPLACE_API_URL", undefined);
     await withCredentials(f.credentials, (store) =>
       store.write({
         version: 1,

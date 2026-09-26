@@ -100,6 +100,89 @@ test("CLI keeps bootstrap proof before request, scrubs a conflicted label and ex
   });
 });
 
+test("signup shows the permanent assigned mailbox on fresh and recovered human output without changing JSON", async () => {
+  const path = await file();
+  const accountId = randomUUID();
+  const workplaceId = randomUUID();
+  const address = "acornapple03@mail.agentworkplace.dev";
+  const status = {
+    accountId,
+    workplaceId,
+    workplaceState: "unconfirmed",
+    cleanupAt: "2026-10-25T00:00:00.000Z",
+    nomination: {
+      id: randomUUID(),
+      email: "private-owner@example.test",
+      deliveryState: "accepted",
+      expiresAt: "2026-09-25T00:10:00.000Z",
+    },
+    mailbox: { mailboxId: randomUUID(), accountId, address },
+  } as Awaited<ReturnType<AgentWorkplace["accessStatus"]>>;
+  const signup = vi
+    .spyOn(AgentWorkplace.prototype, "signup")
+    .mockResolvedValue({
+      accountId,
+      workplaceId,
+      credential: { id: randomUUID(), key: "private-signup-key" },
+    } as Awaited<ReturnType<AgentWorkplace["signup"]>>);
+  vi.spyOn(AgentWorkplace.prototype, "acknowledgeSignup").mockResolvedValue(
+    {} as Awaited<ReturnType<AgentWorkplace["acknowledgeSignup"]>>,
+  );
+  const access = vi
+    .spyOn(AgentWorkplace.prototype, "accessStatus")
+    .mockResolvedValue(status);
+  const write = vi.fn();
+  const options = {
+    credentials: path,
+    baseUrl: "https://api.example.test",
+    name: "Display name",
+    ownerEmail: "owner@example.test",
+    json: false,
+    write,
+  };
+  await executeSignup(options);
+  const human = write.mock.calls[0]![0] as string;
+  expect(human).toContain(
+    `Mailbox address: ${address}\nThis address is permanent and cannot be renamed.`,
+  );
+  expect(human).not.toContain("private-signup-key");
+  expect(human).not.toContain("bootstrapProof");
+  expect(human).toContain("Cleanup deadline: 2026-10-25T00:00:00.000Z");
+  expect(human).toContain("Nomination delivery: accepted");
+  expect(human).toContain("Next: Read the nomination ID from status");
+  expect(human).not.toContain("private-owner@example.test");
+  write.mockClear();
+  await executeSignup(options);
+  expect(write).toHaveBeenCalledWith(human);
+  expect(signup).toHaveBeenCalledTimes(1);
+  write.mockClear();
+  await executeSignup({ ...options, json: true });
+  expect(write).toHaveBeenCalledWith(`${JSON.stringify(status)}\n`);
+  for (const deliveryState of ["failed", "uncertain"] as const) {
+    access.mockResolvedValue({
+      ...status,
+      nomination: { ...status.nomination!, deliveryState },
+    });
+    write.mockClear();
+    await executeSignup(options);
+    expect(write.mock.calls[0]![0]).toContain(
+      `Nomination delivery: ${deliveryState}`,
+    );
+    expect(write.mock.calls[0]![0]).toContain(
+      deliveryState === "failed"
+        ? "Next: Check status, then resend the nomination if appropriate."
+        : "Next: Check status before retrying nomination delivery.",
+    );
+  }
+  access.mockResolvedValue({ ...status, mailbox: undefined });
+  write.mockClear();
+  await executeSignup(options);
+  expect(write.mock.calls[0]![0]).toContain(
+    "Mailbox address: unavailable; check account-status or mail address",
+  );
+  expect(write.mock.calls[0]![0]).not.toContain(address);
+});
+
 test("new-session read/list/omissions use the SDK, preserve JSON and escape all untrusted human-output fields", async () => {
   const path = await file();
   const accountId = randomUUID(),

@@ -39,10 +39,12 @@ async function fixture(general = false) {
       }
     : legacy;
   await withCredentials(file, (store) => store.write(state));
-  vi.spyOn(AgentWorkplace.prototype, "accountStatus").mockResolvedValue({
-    accountId,
-    workplaceId,
-  } as Awaited<ReturnType<AgentWorkplace["accountStatus"]>>);
+  const status = vi
+    .spyOn(AgentWorkplace.prototype, "accountStatus")
+    .mockResolvedValue({
+      accountId,
+      workplaceId,
+    } as Awaited<ReturnType<AgentWorkplace["accountStatus"]>>);
   const begin = vi
     .spyOn(AgentWorkplace.prototype, "beginKeyRotation")
     .mockImplementation(async (_key, operationId) => ({
@@ -56,9 +58,28 @@ async function fixture(general = false) {
     .mockResolvedValue({ completed: true });
   const write = vi.fn();
   const options = { credentials: file, name: "Rotation", json: true, write };
-  return { file, begin, complete, options, state };
+  return { file, begin, complete, options, state, status };
 }
 describe("private CLI rotation handoff", () => {
+  it.each(["", "https://api.agentworkplace.dev"])(
+    "rejects a conflicting or empty override before using a saved key (%s)",
+    async (baseUrl) => {
+      const f = await fixture();
+      await expect(
+        executeKeyRotation({ ...f.options, baseUrl }),
+      ).rejects.toThrow();
+      await expect(
+        executeKeyIssue(
+          { ...f.options, baseUrl, saveTo: `${f.file}.issued` },
+          false,
+        ),
+      ).rejects.toThrow();
+      expect(f.status).not.toHaveBeenCalled();
+      expect(f.begin).not.toHaveBeenCalled();
+      expect(f.complete).not.toHaveBeenCalled();
+      expect(await readFile(f.file, "utf8")).toContain("old-secret");
+    },
+  );
   it("keeps the old credential and stable operation after a failed candidate write", async () => {
     const f = await fixture();
     const rename = vi.spyOn(fs, "rename");

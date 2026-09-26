@@ -1,5 +1,6 @@
 import { readPrivateReceipt } from "../private-receipt.js";
 import { AgentWorkplace, type DeletionStatus } from "@agent-workplace/sdk";
+import { productionApiOrigin } from "../client.js";
 import { accessOrigin } from "../credentials.js";
 import { CliConfigurationError } from "../errors.js";
 import type { WriteOutput } from "../output.js";
@@ -9,7 +10,7 @@ export type CreateDeletionClient = (
 ) => Pick<AgentWorkplace, "workplaceDeletionStatus">;
 const invalid = () =>
   new CliConfigurationError(
-    "Expected a private deletion receipt for the selected API origin",
+    "Expected a private deletion receipt for the selected API origin; set AGENT_WORKPLACE_API_URL for another environment",
   );
 export async function executeDeletionStatus(options: {
   baseUrl?: string;
@@ -19,11 +20,7 @@ export async function executeDeletionStatus(options: {
   write: WriteOutput;
   createClient?: CreateDeletionClient;
 }) {
-  if (!options.baseUrl)
-    throw new CliConfigurationError(
-      "API base URL is required. Pass --base-url or set AGENT_WORKPLACE_API_URL.",
-    );
-  const origin = accessOrigin(options.baseUrl);
+  const origin = accessOrigin(options.baseUrl ?? productionApiOrigin);
   const text = await readPrivateReceipt(
     options.receipt,
     options.input,
