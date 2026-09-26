@@ -19,9 +19,10 @@ export async function executeKeyRotation(
     let state = await store.read();
     if (!state?.credential)
       throw new CliConfigurationError("No saved agent credential");
-    const origin = options.baseUrl
-      ? accessOrigin(options.baseUrl)
-      : state.origin;
+    const origin =
+      options.baseUrl !== undefined
+        ? accessOrigin(options.baseUrl)
+        : state.origin;
     if (origin !== state.origin)
       throw new CliConfigurationError(
         "Credential file belongs to another API origin",
@@ -134,7 +135,10 @@ export async function executeKeyIssue(
     const saved = await source.read();
     if (!saved?.credential)
       throw new CliConfigurationError("No saved agent credential");
-    if (options.baseUrl && accessOrigin(options.baseUrl) !== saved.origin)
+    if (
+      options.baseUrl !== undefined &&
+      accessOrigin(options.baseUrl) !== saved.origin
+    )
       throw new CliConfigurationError(
         "Credential file belongs to another API origin",
       );

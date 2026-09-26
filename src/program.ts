@@ -99,11 +99,15 @@ import { Command, CommanderError, Option } from "commander";
 
 import { executeHealth } from "./commands/health.js";
 import type { CreateHealthClient } from "./commands/health.js";
+import {
+  executeDocsListOrRead,
+  executeDocsSearch,
+  type CreateDocsClient,
+} from "./commands/docs.js";
 import { writeError } from "./output.js";
 import type { WriteOutput } from "./output.js";
 
 interface GlobalOptions {
-  baseUrl?: string;
   credentials?: string;
 }
 
@@ -120,6 +124,7 @@ export interface RunCliOptions {
   version: string;
   input?: AsyncIterable<string | Uint8Array>;
   createClient?: CreateHealthClient;
+  createDocsClient?: CreateDocsClient;
   createDeletionClient?: CreateDeletionClient;
   /** Used for every product operation, including private deletion receipts. */
   createProductClient?: CreateProductClient;
@@ -133,6 +138,7 @@ export async function runCli(
 ): Promise<number> {
   const writeOut = options.writeOut ?? ((value) => process.stdout.write(value));
   const writeErr = options.writeErr ?? ((value) => process.stderr.write(value));
+  const apiUrlOverride = process.env.AGENT_WORKPLACE_API_URL;
   let failure: OperationalFailure | undefined;
 
   const program = new Command()
@@ -140,12 +146,7 @@ export async function runCli(
     .description("Command-line interface for Agent Workplace")
     .version(options.version)
     .exitOverride()
-    .configureOutput({ writeOut, writeErr })
-    .addOption(
-      new Option("--base-url <url>", "Agent Workplace API base URL").env(
-        "AGENT_WORKPLACE_API_URL",
-      ),
-    );
+    .configureOutput({ writeOut, writeErr });
 
   program.addOption(
     new Option("--credentials <path>", "Private credential file").env(
@@ -155,6 +156,7 @@ export async function runCli(
 
   const productOptions = () => ({
     ...program.opts<GlobalOptions>(),
+    baseUrl: apiUrlOverride,
     createProductClient: options.createProductClient,
   });
 
@@ -188,7 +190,7 @@ export async function runCli(
     .action(async (input: { receipt: string; json?: boolean }) => {
       try {
         await executeOwnerEmailStatus({
-          baseUrl: program.opts<GlobalOptions>().baseUrl,
+          baseUrl: apiUrlOverride,
           createProductClient: options.createProductClient,
           receipt: input.receipt,
           input: options.input ?? process.stdin,
@@ -215,7 +217,7 @@ export async function runCli(
             "Choose either createProductClient or createDeletionClient for deletion status",
           );
         await executeDeletionStatus({
-          baseUrl: program.opts<GlobalOptions>().baseUrl,
+          baseUrl: apiUrlOverride,
           receipt: input.receipt,
           input: options.input ?? process.stdin,
           json: input.json ?? false,
@@ -2116,12 +2118,18 @@ export async function runCli(
     .description(
       "Create or resume an agent workplace and securely save credentials",
     )
-    .requiredOption("--name <name>", "Agent display name")
+    .requiredOption(
+      "--name <name>",
+      "Agent display name; does not select the mailbox address",
+    )
     .requiredOption("--owner-email <email>", "Nominated human email")
-    .option("--mailbox-name <label>", "Optional exact mailbox name")
+    .option(
+      "--mailbox-name <label>",
+      "Optional permanent exact mailbox name; otherwise allocate a readable default",
+    )
     .option(
       "--mailbox-default",
-      "Select the UUID default after a conflict or expiry",
+      "Select an automatic mailbox address after a conflict or expiry",
     )
     .option("--json", "output machine-readable JSON")
     .action(
@@ -2349,13 +2357,46 @@ export async function runCli(
     .action(async (commandOptions: HealthOptions) => {
       try {
         await executeHealth({
-          baseUrl: program.opts<GlobalOptions>().baseUrl,
+          baseUrl: apiUrlOverride,
           json: commandOptions.json ?? false,
           createClient: options.createClient,
           write: writeOut,
         });
       } catch (error) {
         failure = { error, json: commandOptions.json ?? false };
+      }
+    });
+
+  const docs = program
+    .command("docs [path]")
+    .description("List, search, or read the current public documentation")
+    .option("--json", "output machine-readable JSON")
+    .action(async (path: string | undefined, commandOptions: HealthOptions) => {
+      try {
+        await executeDocsListOrRead(path, {
+          createClient: options.createDocsClient,
+          json: commandOptions.json ?? false,
+          write: writeOut,
+        });
+      } catch (error) {
+        failure = { error, json: commandOptions.json ?? false };
+      }
+    });
+  docs
+    .command("search <query>")
+    .description("Find documentation pages")
+    .option("--json", "output machine-readable JSON")
+    .action(async (query: string, commandOptions: HealthOptions) => {
+      const json =
+        commandOptions.json ?? docs.opts<HealthOptions>().json ?? false;
+      try {
+        await executeDocsSearch(query, {
+          createClient: options.createDocsClient,
+          json,
+          write: writeOut,
+        });
+      } catch (error) {
+        failure = { error, json };
       }
     });
 

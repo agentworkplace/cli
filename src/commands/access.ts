@@ -1,8 +1,13 @@
-import { productClient, type ProductClientOptions } from "../client.js";
+import {
+  productClient,
+  productionApiOrigin,
+  type ProductClientOptions,
+} from "../client.js";
 import type { MailboxAddressChoice } from "@agent-workplace/sdk";
 import { randomBytes } from "node:crypto";
 import {
   AgentWorkplaceError,
+  type AccessStatus,
   type AccountAccessStatus,
   type AgentWorkplace,
 } from "@agent-workplace/sdk";
@@ -25,6 +30,38 @@ function output(value: unknown, json: boolean, write: WriteOutput) {
     json ? `${JSON.stringify(value)}\n` : `${JSON.stringify(value, null, 2)}\n`,
   );
 }
+function signupOutput(status: AccessStatus, json: boolean, write: WriteOutput) {
+  if (json) return output(status, true, write);
+  const delivery = status.nomination?.deliveryState;
+  const next =
+    delivery === "failed"
+      ? "Check status, then resend the nomination if appropriate."
+      : delivery === "uncertain"
+        ? "Check status before retrying nomination delivery."
+        : delivery === "accepted"
+          ? "Read the nomination ID from status before confirming ownership."
+          : "Check status for the current nomination and next step.";
+  write(
+    [
+      status.mailbox?.address
+        ? `Mailbox address: ${status.mailbox.address}`
+        : "Mailbox address: unavailable; check account-status or mail address",
+      ...(status.mailbox
+        ? ["This address is permanent and cannot be renamed."]
+        : []),
+      `Account ID: ${status.accountId}`,
+      `Workplace ID: ${status.workplaceId}`,
+      `Workplace status: ${status.workplaceState}`,
+      ...(status.workplaceState === "unconfirmed"
+        ? [
+            `Cleanup deadline: ${status.cleanupAt}`,
+            `Nomination delivery: ${delivery ?? "none"}`,
+            `Next: ${next}`,
+          ]
+        : []),
+    ].join("\n") + "\n",
+  );
+}
 
 export async function executeSignup(
   options: AccessCommandOptions & {
@@ -40,13 +77,10 @@ export async function executeSignup(
       throw new CliConfigurationError(
         "Credential file belongs to an account, not a signup; choose a separate credential file",
       );
-    const origin = options.baseUrl
-      ? accessOrigin(options.baseUrl)
-      : state?.origin;
-    if (!origin)
-      throw new CliConfigurationError(
-        "Specify --base-url for the first signup",
-      );
+    const origin =
+      options.baseUrl !== undefined
+        ? accessOrigin(options.baseUrl)
+        : (state?.origin ?? productionApiOrigin);
     if (
       state &&
       (state.origin !== origin ||
@@ -99,7 +133,7 @@ export async function executeSignup(
           throw new CliConfigurationError(
             "Saved credential identity does not match the API response",
           );
-        output(status, options.json, options.write);
+        signupOutput(status, options.json, options.write);
         return;
       } catch (error) {
         if (
@@ -155,7 +189,7 @@ export async function executeSignup(
       acknowledged: true,
     };
     await store.write(completed);
-    output(
+    signupOutput(
       await client.accessStatus(response.credential.key),
       options.json,
       options.write,
@@ -238,7 +272,10 @@ export async function executeSavedOperation(
       throw new CliConfigurationError(
         "No saved credentials; save an account key or complete signup first",
       );
-    if (options.baseUrl && accessOrigin(options.baseUrl) !== state.origin)
+    if (
+      options.baseUrl !== undefined &&
+      accessOrigin(options.baseUrl) !== state.origin
+    )
       throw new CliConfigurationError(
         "Saved credentials belong to another API origin",
       );

@@ -12,6 +12,7 @@ const id = randomUUID();
 const directories: string[] = [];
 afterEach(async () => {
   vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
   await Promise.all(
     directories
       .splice(0)
@@ -80,6 +81,7 @@ const commands = [
 test.each(commands.map((args) => ({ name: args.join(" "), args })))(
   "supplied SDK transport owns $name",
   async ({ args }) => {
+    vi.stubEnv("AGENT_WORKPLACE_API_URL", origin);
     const directory = await mkdtemp(join(tmpdir(), "awp-cli-factory-"));
     directories.push(directory);
     const credentials = join(directory, "credentials.json");
@@ -113,7 +115,7 @@ test.each(commands.map((args) => ({ name: args.join(" "), args })))(
     let stdout = "",
       stderr = "";
     const exitCode = await runCli(
-      ["--base-url", origin, "--credentials", credentials, ...args, "--json"],
+      ["--credentials", credentials, ...args, "--json"],
       {
         version: "0.0.0",
         createProductClient: factory,
@@ -148,17 +150,14 @@ test.each(commands.map((args) => ({ name: args.join(" "), args })))(
 );
 
 test("health remains distinct and local commands never construct product clients", async () => {
+  vi.stubEnv("AGENT_WORKPLACE_API_URL", origin);
   const product = vi.fn(() => {
     throw new Error("Product factory must not run");
   });
   const health = vi.fn(() => ({
     health: async () => ({ status: "ok" as const }),
   }));
-  for (const args of [
-    ["--help"],
-    ["--version"],
-    ["--base-url", origin, "health", "--json"],
-  ]) {
+  for (const args of [["--help"], ["--version"], ["health", "--json"]]) {
     expect(
       await runCli(args, {
         version: "0.0.0",
@@ -174,6 +173,7 @@ test("health remains distinct and local commands never construct product clients
 });
 
 test("conflicting deletion factories fail before reading a receipt or sending", async () => {
+  vi.stubEnv("AGENT_WORKPLACE_API_URL", origin);
   const product = vi.fn(() => {
     throw new Error("Must not construct");
   });
@@ -187,19 +187,16 @@ test("conflicting deletion factories fail before reading a receipt or sending", 
   };
   let stderr = "";
   expect(
-    await runCli(
-      ["--base-url", origin, "deletion-status", "--receipt", "-", "--json"],
-      {
-        version: "0.0.0",
-        createProductClient: product,
-        createDeletionClient: deletion,
-        input,
-        writeOut: () => {},
-        writeErr: (value) => {
-          stderr += value;
-        },
+    await runCli(["deletion-status", "--receipt", "-", "--json"], {
+      version: "0.0.0",
+      createProductClient: product,
+      createDeletionClient: deletion,
+      input,
+      writeOut: () => {},
+      writeErr: (value) => {
+        stderr += value;
       },
-    ),
+    }),
   ).toBe(1);
   expect(stderr).toContain(
     "Choose either createProductClient or createDeletionClient",

@@ -1,5 +1,5 @@
 import { AgentWorkplaceError } from "@agent-workplace/sdk";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { runCli } from "../src/program.js";
 import type { RunCliOptions } from "../src/program.js";
@@ -31,8 +31,12 @@ async function invoke(
   return { exitCode, stdout, stderr };
 }
 
+beforeEach(() => {
+  vi.stubEnv("AGENT_WORKPLACE_API_URL", undefined);
+});
 afterEach(() => {
   vi.unstubAllEnvs();
+  vi.unstubAllGlobals();
 });
 
 describe("agent-workplace CLI", () => {
@@ -78,27 +82,25 @@ describe("agent-workplace CLI", () => {
     });
   });
 
-  it("requires explicit API configuration", async () => {
-    vi.stubEnv("AGENT_WORKPLACE_API_URL", undefined);
-
-    await expect(invoke(["health"])).resolves.toEqual({
-      exitCode: 1,
-      stdout: "",
-      stderr:
-        "Error: API base URL is required. Pass --base-url or set AGENT_WORKPLACE_API_URL.\n",
-    });
-  });
-
-  it("reports missing API configuration as JSON when requested", async () => {
-    vi.stubEnv("AGENT_WORKPLACE_API_URL", undefined);
-
-    await expect(invoke(["health", "--json"])).resolves.toEqual({
-      exitCode: 1,
-      stdout: "",
-      stderr:
-        '{"error":{"message":"API base URL is required. Pass --base-url or set AGENT_WORKPLACE_API_URL."}}\n',
-    });
-  });
+  it.each([
+    { args: ["health"], stdout: "Status: ok\n" },
+    { args: ["health", "--json"], stdout: '{"status":"ok"}\n' },
+  ])(
+    "uses production for a clean-environment $args",
+    async ({ args, stdout }) => {
+      const createClient = vi.fn(() => ({
+        health: vi.fn(async () => ({ status: "ok" as const })),
+      }));
+      await expect(invoke(args, { createClient })).resolves.toEqual({
+        exitCode: 0,
+        stdout,
+        stderr: "",
+      });
+      expect(createClient).toHaveBeenCalledExactlyOnceWith(
+        "https://api.agentworkplace.dev",
+      );
+    },
+  );
 
   it("uses the environment URL", async () => {
     vi.stubEnv("AGENT_WORKPLACE_API_URL", "https://environment.example.com");
@@ -118,21 +120,43 @@ describe("agent-workplace CLI", () => {
     });
   });
 
-  it("prefers the CLI URL over the environment", async () => {
-    vi.stubEnv("AGENT_WORKPLACE_API_URL", "https://environment.example.com");
-    const createClient = vi.fn(() => ({
-      health: vi.fn(async () => ({ status: "ok" as const })),
-    }));
-
-    await invoke(["health", "--base-url", "https://option.example.com"], {
-      createClient,
+  it("does not retry production when the configured environment is unavailable", async () => {
+    const staging = "https://staging-api.agentworkplace.dev";
+    vi.stubEnv("AGENT_WORKPLACE_API_URL", staging);
+    const health = vi.fn(async () => {
+      throw new AgentWorkplaceError("Unavailable", {
+        status: 503,
+        code: "service_unavailable",
+      });
     });
-
-    expect(createClient).toHaveBeenCalledWith("https://option.example.com");
+    const createClient = vi.fn(() => ({ health }));
+    const result = await invoke(["health", "--json"], { createClient });
+    expect(result).toEqual({
+      exitCode: 1,
+      stdout: "",
+      stderr:
+        '{"error":{"message":"Unavailable","status":503,"code":"service_unavailable"}}\n',
+    });
+    expect(createClient).toHaveBeenCalledExactlyOnceWith(staging);
+    expect(health).toHaveBeenCalledTimes(1);
   });
 
-  it("presents invalid base URLs safely", async () => {
-    const result = await invoke(["health", "--base-url", "relative/path"]);
+  it("rejects the removed flag before constructing a client", async () => {
+    vi.stubEnv("AGENT_WORKPLACE_API_URL", "https://environment.example.com");
+    const createClient = vi.fn();
+    const result = await invoke(
+      ["--base-url", "https://option.example.com", "health"],
+      { createClient },
+    );
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toContain("unknown option '--base-url'");
+    expect(createClient).not.toHaveBeenCalled();
+  });
+
+  it("presents invalid environment URLs safely", async () => {
+    vi.stubEnv("AGENT_WORKPLACE_API_URL", "relative/path");
+    const result = await invoke(["health"]);
 
     expect(result).toEqual({
       exitCode: 1,
@@ -141,15 +165,26 @@ describe("agent-workplace CLI", () => {
     });
   });
 
+  it("does not treat an empty environment URL as absent", async () => {
+    vi.stubEnv("AGENT_WORKPLACE_API_URL", "");
+    const fetch = vi.fn();
+    vi.stubGlobal("fetch", fetch);
+    const result = await invoke(["health", "--json"]);
+    expect(result).toEqual({
+      exitCode: 1,
+      stdout: "",
+      stderr:
+        '{"error":{"message":"Agent Workplace base URL must not be empty"}}\n',
+    });
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
   it("writes only human-readable output on success", async () => {
-    const result = await invoke(
-      ["health", "--base-url", "https://api.example.com"],
-      {
-        createClient: () => ({
-          health: vi.fn(async () => ({ status: "ok" as const })),
-        }),
-      },
-    );
+    const result = await invoke(["health"], {
+      createClient: () => ({
+        health: vi.fn(async () => ({ status: "ok" as const })),
+      }),
+    });
 
     expect(result).toEqual({
       exitCode: 0,
@@ -159,14 +194,11 @@ describe("agent-workplace CLI", () => {
   });
 
   it("writes only valid JSON on success", async () => {
-    const result = await invoke(
-      ["health", "--json", "--base-url", "https://api.example.com"],
-      {
-        createClient: () => ({
-          health: vi.fn(async () => ({ status: "ok" as const })),
-        }),
-      },
-    );
+    const result = await invoke(["health", "--json"], {
+      createClient: () => ({
+        health: vi.fn(async () => ({ status: "ok" as const })),
+      }),
+    });
 
     expect(result).toEqual({
       exitCode: 0,
@@ -177,19 +209,16 @@ describe("agent-workplace CLI", () => {
   });
 
   it("presents SDK errors with established fields", async () => {
-    const result = await invoke(
-      ["health", "--base-url", "https://api.example.com"],
-      {
-        createClient: () => ({
-          health: vi.fn(async () => {
-            throw new AgentWorkplaceError("Try again", {
-              status: 503,
-              code: "service_unavailable",
-            });
-          }),
+    const result = await invoke(["health"], {
+      createClient: () => ({
+        health: vi.fn(async () => {
+          throw new AgentWorkplaceError("Try again", {
+            status: 503,
+            code: "service_unavailable",
+          });
         }),
-      },
-    );
+      }),
+    });
 
     expect(result).toEqual({
       exitCode: 1,
@@ -199,19 +228,16 @@ describe("agent-workplace CLI", () => {
   });
 
   it("writes deterministic SDK errors as JSON", async () => {
-    const result = await invoke(
-      ["health", "--json", "--base-url", "https://api.example.com"],
-      {
-        createClient: () => ({
-          health: vi.fn(async () => {
-            throw new AgentWorkplaceError("Invalid response", {
-              status: 200,
-              code: "invalid_response",
-            });
-          }),
+    const result = await invoke(["health", "--json"], {
+      createClient: () => ({
+        health: vi.fn(async () => {
+          throw new AgentWorkplaceError("Invalid response", {
+            status: 200,
+            code: "invalid_response",
+          });
         }),
-      },
-    );
+      }),
+    });
 
     expect(result).toEqual({
       exitCode: 1,
@@ -229,16 +255,13 @@ describe("agent-workplace CLI", () => {
   });
 
   it("does not expose unknown failure details", async () => {
-    const result = await invoke(
-      ["health", "--json", "--base-url", "https://api.example.com"],
-      {
-        createClient: () => ({
-          health: vi.fn(async () => {
-            throw new TypeError("fetch failed with provider secret");
-          }),
+    const result = await invoke(["health", "--json"], {
+      createClient: () => ({
+        health: vi.fn(async () => {
+          throw new TypeError("fetch failed with provider secret");
         }),
-      },
-    );
+      }),
+    });
 
     expect(result).toEqual({
       exitCode: 1,

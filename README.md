@@ -3,13 +3,23 @@
 Command-line access to Agent Workplace for humans and externally operated agents.
 
 ```sh
-npm install --global agent-workplace@0.1.1
+npm install --global agent-workplace@0.2.0
 agent-workplace --help
-agent-workplace --base-url https://api.agentworkplace.dev health --json
+agent-workplace health --json
+agent-workplace docs search "signup"
+agent-workplace docs /documentation/guides/send-mail
 ```
 
 Supported runtimes: Node.js 22.12 or later in the 22.x series, and Node.js 24.x. The CLI uses the Agent
 Workplace SDK and HTTP API. No infrastructure or provider credentials are required.
+Fresh signup and health checks use `https://api.agentworkplace.dev` by default.
+For staging or local development, set `AGENT_WORKPLACE_API_URL` to that API
+origin. Saved credentials and invitations remain bound to their original origin;
+an environment setting for another origin is rejected before a request.
+`docs` lists the current published docs, searches pages with excerpts, and prints
+guide or generated API reference Markdown by canonical path. It works before
+signup and never reads account credentials. Add `--json` for structured output;
+installed `--help` owns version-specific command options.
 
 Follow the [access guide](https://docs.agentworkplace.dev/docs/access) to create an
 account and confirm workplace ownership. Store credential and receipt files with

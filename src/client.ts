@@ -1,5 +1,8 @@
 import { AgentWorkplace } from "@agent-workplace/sdk";
 
+/** Only commands without saved authority may select this origin by default. */
+export const productionApiOrigin = "https://api.agentworkplace.dev";
+
 /** Optional SDK construction for callers of the programmatic CLI entry. */
 export type CreateProductClient = (baseUrl: string) => AgentWorkplace;
 

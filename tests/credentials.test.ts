@@ -18,12 +18,13 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   accessOrigin,
   withCredentials,
   type CredentialState,
 } from "../src/credentials.js";
+import { runCli } from "../src/program.js";
 
 vi.mock("node:fs/promises", { spy: true });
 
@@ -35,6 +36,9 @@ const state: CredentialState = {
   acknowledged: false,
 };
 const directories: string[] = [];
+beforeEach(() => {
+  vi.stubEnv("AGENT_WORKPLACE_API_URL", undefined);
+});
 async function fixture() {
   const directory = await mkdtemp(join(tmpdir(), "awp-credentials-"));
   directories.push(directory);
@@ -43,11 +47,211 @@ async function fixture() {
 afterEach(async () => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
   for (const directory of directories.splice(0))
     await rm(directory, { recursive: true, force: true });
 });
 
 describe("credential persistence", () => {
+  it("starts a fresh signup at production only after saving its bound proof", async () => {
+    const { file } = await fixture();
+    const signup = vi.fn(async () => {
+      const saved = JSON.parse(await readFile(file, "utf8")) as CredentialState;
+      expect(saved.origin).toBe("https://api.agentworkplace.dev");
+      expect(saved.bootstrapProof).toMatch(/^[A-Za-z0-9_-]{43}$/);
+      throw new Error("Fixture stopped before network");
+    });
+    const factory = vi.fn((baseUrl: string) => {
+      const client = new AgentWorkplace({ baseUrl });
+      client.signup = signup;
+      return client;
+    });
+    const exitCode = await runCli(
+      [
+        "--credentials",
+        file,
+        "signup",
+        "--name",
+        state.name,
+        "--owner-email",
+        state.nominatedEmail,
+        "--json",
+      ],
+      {
+        version: "0.0.0",
+        createProductClient: factory,
+        writeOut: vi.fn(),
+        writeErr: vi.fn(),
+      },
+    );
+    expect(exitCode).toBe(1);
+    expect(factory).toHaveBeenCalledExactlyOnceWith(
+      "https://api.agentworkplace.dev",
+    );
+    expect(signup).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    "",
+    "not-a-url",
+    "http://api.example.test",
+    "https://api.example.test/path",
+    "https://api.example.test?query=1",
+  ])(
+    "rejects an invalid environment URL before a fresh signup (%s)",
+    async (override) => {
+      const { file } = await fixture();
+      vi.stubEnv("AGENT_WORKPLACE_API_URL", override);
+      const factory = vi.fn();
+      const exitCode = await runCli(
+        [
+          "--credentials",
+          file,
+          "signup",
+          "--name",
+          state.name,
+          "--owner-email",
+          state.nominatedEmail,
+        ],
+        {
+          version: "0.0.0",
+          createProductClient: factory,
+          writeOut: vi.fn(),
+          writeErr: vi.fn(),
+        },
+      );
+      expect(exitCode).toBe(1);
+      expect(factory).not.toHaveBeenCalled();
+      await expect(readFile(file)).rejects.toMatchObject({ code: "ENOENT" });
+    },
+  );
+
+  it("resumes a staging signup at its saved origin without an override", async () => {
+    const { file } = await fixture();
+    await withCredentials(file, (store) => store.write(state));
+    const before = await readFile(file, "utf8");
+    const signup = vi.fn(async () => {
+      throw new Error("Fixture stopped before network");
+    });
+    const factory = vi.fn((baseUrl: string) => {
+      const client = new AgentWorkplace({ baseUrl });
+      client.signup = signup;
+      return client;
+    });
+    const exitCode = await runCli(
+      [
+        "--credentials",
+        file,
+        "signup",
+        "--name",
+        state.name,
+        "--owner-email",
+        state.nominatedEmail,
+      ],
+      {
+        version: "0.0.0",
+        createProductClient: factory,
+        writeOut: vi.fn(),
+        writeErr: vi.fn(),
+      },
+    );
+    expect(exitCode).toBe(1);
+    expect(factory).toHaveBeenCalledExactlyOnceWith(state.origin);
+    expect(signup).toHaveBeenCalledTimes(1);
+    expect(await readFile(file, "utf8")).toBe(before);
+  });
+
+  it.each([
+    "",
+    "not-a-url",
+    "http://api.example.test",
+    "https://other.example.test",
+  ])(
+    "rejects an invalid or conflicting environment override before resuming signup (%s)",
+    async (override) => {
+      const { file } = await fixture();
+      await withCredentials(file, (store) => store.write(state));
+      const before = await readFile(file, "utf8");
+      vi.stubEnv("AGENT_WORKPLACE_API_URL", override);
+      const factory = vi.fn();
+      const exitCode = await runCli(
+        [
+          "--credentials",
+          file,
+          "signup",
+          "--name",
+          state.name,
+          "--owner-email",
+          state.nominatedEmail,
+        ],
+        {
+          version: "0.0.0",
+          createProductClient: factory,
+          writeOut: vi.fn(),
+          writeErr: vi.fn(),
+        },
+      );
+      expect(exitCode).toBe(1);
+      expect(factory).not.toHaveBeenCalled();
+      expect(await readFile(file, "utf8")).toBe(before);
+    },
+  );
+
+  it("uses a saved staging origin and key for account status without an override", async () => {
+    const { file } = await fixture();
+    const credential = {
+      accountId: randomUUID(),
+      workplaceId: randomUUID(),
+      key: "staging-only-key",
+    };
+    await withCredentials(file, (store) =>
+      store.write({
+        version: 1,
+        kind: "account",
+        origin: state.origin,
+        credential,
+      }),
+    );
+    const accountStatus = vi.fn(
+      async () =>
+        ({
+          accountId: credential.accountId,
+          workplaceId: credential.workplaceId,
+        }) as Awaited<ReturnType<AgentWorkplace["accountStatus"]>>,
+    );
+    const factory = vi.fn((baseUrl: string) => {
+      const client = new AgentWorkplace({ baseUrl });
+      client.accountStatus = accountStatus;
+      return client;
+    });
+    const exitCode = await runCli(
+      ["--credentials", file, "account-status", "--json"],
+      {
+        version: "0.0.0",
+        createProductClient: factory,
+        writeOut: vi.fn(),
+        writeErr: vi.fn(),
+      },
+    );
+    expect(exitCode).toBe(0);
+    expect(factory).toHaveBeenCalledExactlyOnceWith(state.origin);
+    expect(accountStatus).toHaveBeenCalledExactlyOnceWith({
+      apiKey: credential.key,
+    });
+    vi.stubEnv("AGENT_WORKPLACE_API_URL", "https://api.agentworkplace.dev");
+    const mismatch = await runCli(
+      ["--credentials", file, "account-status", "--json"],
+      {
+        version: "0.0.0",
+        createProductClient: factory,
+        writeOut: vi.fn(),
+        writeErr: vi.fn(),
+      },
+    );
+    expect(mismatch).toBe(1);
+    expect(factory).toHaveBeenCalledTimes(1);
+    expect(accountStatus).toHaveBeenCalledTimes(1);
+  });
   it("persists private state atomically with restrictive permissions", async () => {
     const { directory, file } = await fixture();
     await withCredentials(file, async (store) => {

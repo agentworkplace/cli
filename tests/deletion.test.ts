@@ -20,6 +20,7 @@ const status = {
 };
 const directories: string[] = [];
 afterEach(async () => {
+  vi.unstubAllEnvs();
   await Promise.all(
     directories
       .splice(0)
@@ -29,31 +30,26 @@ afterEach(async () => {
 async function invoke(
   path: string,
   text: string,
-  baseUrl = origin,
+  baseUrl: string | null = origin,
   json = true,
   reject = false,
 ) {
+  vi.stubEnv("AGENT_WORKPLACE_API_URL", baseUrl ?? undefined);
   let stdout = "",
     stderr = "";
   const request = vi.fn(async () => {
     if (reject) throw new Error(receipt.proof);
     return status;
   });
+  const createClient = vi.fn(() => ({ workplaceDeletionStatus: request }));
   const exitCode = await runCli(
-    [
-      "--base-url",
-      baseUrl,
-      "deletion-status",
-      "--receipt",
-      path,
-      ...(json ? ["--json"] : []),
-    ],
+    ["deletion-status", "--receipt", path, ...(json ? ["--json"] : [])],
     {
       version: "0.0.0",
       input: (async function* () {
         yield text;
       })(),
-      createDeletionClient: () => ({ workplaceDeletionStatus: request }),
+      createDeletionClient: createClient,
       writeOut: (value) => {
         stdout += value;
       },
@@ -62,7 +58,7 @@ async function invoke(
       },
     },
   );
-  return { exitCode, stdout, stderr, request };
+  return { exitCode, stdout, stderr, request, createClient };
 }
 test("stdin status emits only exact public outcome and never private receipt fields", async () => {
   const result = await invoke("-", JSON.stringify(receipt));
@@ -70,6 +66,7 @@ test("stdin status emits only exact public outcome and never private receipt fie
   expect(result.stderr).toBe("");
   expect(result.stdout).toBe(`${JSON.stringify(status)}\n`);
   expect(result.request).toHaveBeenCalledWith(receipt.proof);
+  expect(result.createClient).toHaveBeenCalledWith(origin);
   const human = await invoke("-", JSON.stringify(receipt), origin, false);
   expect(human.stdout).toBe(
     `Deletion: deleted\nInitiated: ${status.initiatedAt}\nReceipt expires: ${status.receiptExpiresAt}\n`,
@@ -86,8 +83,9 @@ test.each([
   expect(result.exitCode).toBe(1);
   expect(result.stdout).toBe("");
   expect(result.request).not.toHaveBeenCalled();
+  expect(result.createClient).not.toHaveBeenCalled();
   expect(result.stderr).toBe(
-    '{"error":{"message":"Expected a private deletion receipt for the selected API origin"}}\n',
+    '{"error":{"message":"Expected a private deletion receipt for the selected API origin; set AGENT_WORKPLACE_API_URL for another environment"}}\n',
   );
 });
 test("receipt cannot select non-loopback HTTP and failures never echo its secret", async () => {
@@ -98,11 +96,28 @@ test("receipt cannot select non-loopback HTTP and failures never echo its secret
   );
   expect(unsafe.exitCode).toBe(1);
   expect(unsafe.request).not.toHaveBeenCalled();
+  expect(unsafe.createClient).not.toHaveBeenCalled();
   const failed = await invoke("-", JSON.stringify(receipt), origin, true, true);
   expect(failed.stdout).toBe("");
   expect(failed.stderr).toBe(
     '{"error":{"message":"Unable to complete the request"}}\n',
   );
+});
+test("production receipt uses the default and a staging receipt cannot redirect it", async () => {
+  const productionReceipt = {
+    ...receipt,
+    apiOrigin: "https://api.agentworkplace.dev",
+  };
+  const production = await invoke("-", JSON.stringify(productionReceipt), null);
+  expect(production.exitCode).toBe(0);
+  expect(production.createClient).toHaveBeenCalledWith(
+    productionReceipt.apiOrigin,
+  );
+  const staging = await invoke("-", JSON.stringify(receipt), null);
+  expect(staging.exitCode).toBe(1);
+  expect(staging.stderr).toContain("AGENT_WORKPLACE_API_URL");
+  expect(staging.createClient).not.toHaveBeenCalled();
+  expect(staging.request).not.toHaveBeenCalled();
 });
 test.skipIf(process.platform === "win32")(
   "files require restrictive permissions and reject links before transport",
