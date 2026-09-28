@@ -1,4 +1,5 @@
 name: Publish reviewed package
+run-name: Publish ${{ inputs.version }} (${{ inputs.tag }}) from ${{ inputs.reviewed_sha }}
 
 on:
   workflow_dispatch:

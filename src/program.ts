@@ -1,4 +1,5 @@
 import { executeMailCopy } from "./commands/mail-copy.js";
+import { executeFeedbackSend } from "./commands/feedback.js";
 import { executeMailExport } from "./commands/mail-export.js";
 import {
   executeOwnerEmailHandoff,
@@ -159,6 +160,40 @@ export async function runCli(
     baseUrl: apiUrlOverride,
     createProductClient: options.createProductClient,
   });
+
+  program
+    .command("feedback")
+    .description("Submit private feedback to Agent Workplace")
+    .command("send")
+    .description("Store a bug report, suggestion, or general feedback")
+    .option("--message <text>", "Explicit feedback text")
+    .option("--message-file <path>", "UTF-8 feedback file, or - for stdin")
+    .option("--category <category>", "bug, suggestion, or general")
+    .option("--request-id <id>", "Related Agent Workplace request ID")
+    .option("--submission-id <id>", "Reuse this ID for an uncertain retry")
+    .option("--json", "output machine-readable JSON")
+    .action(
+      async (input: {
+        message?: string;
+        messageFile?: string;
+        category?: "bug" | "suggestion" | "general";
+        requestId?: string;
+        submissionId?: string;
+        json?: boolean;
+      }) => {
+        try {
+          await executeFeedbackSend({
+            ...productOptions(),
+            ...input,
+            input: options.input,
+            json: input.json ?? false,
+            write: writeOut,
+          });
+        } catch (error) {
+          failure = { error, json: input.json ?? false };
+        }
+      },
+    );
 
   program
     .command("owner-email-handoff")
