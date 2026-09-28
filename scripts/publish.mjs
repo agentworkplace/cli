@@ -21,13 +21,13 @@ export function validatePublication(env, source, packed) {
   assert.equal(env.GITHUB_ACTIONS, "true");
   assert.equal(env.GITHUB_EVENT_NAME, "workflow_dispatch");
   assert.equal(env.GITHUB_REPOSITORY, repository);
-  assert.equal(env.GITHUB_REF, "refs/heads/main");
+  assert.equal(env.GITHUB_REF, `refs/tags/v${source.version}`);
   assert.equal(env.GITHUB_RUN_ATTEMPT, "1");
   assert.match(env.REVIEWED_SHA ?? "", /^[0-9a-f]{40}$/);
   assert.equal(env.GITHUB_SHA, env.REVIEWED_SHA);
   assert.equal(
     env.GITHUB_WORKFLOW_REF,
-    `${repository}/.github/workflows/publish.yml@refs/heads/main`,
+    `${repository}/.github/workflows/publish.yml@refs/tags/v${source.version}`,
   );
   assert.ok(env.ACTIONS_ID_TOKEN_REQUEST_URL);
   assert.ok(env.ACTIONS_ID_TOKEN_REQUEST_TOKEN);
@@ -110,6 +110,18 @@ async function main() {
     (await exec("git", ["rev-parse", "HEAD"], { cwd: root })).stdout.trim(),
     env.REVIEWED_SHA,
   );
+  await exec("git", ["fetch", "--no-tags", "origin", "main"], { cwd: root });
+  try {
+    await exec(
+      "git",
+      ["merge-base", "--is-ancestor", env.REVIEWED_SHA, "FETCH_HEAD"],
+      { cwd: root },
+    );
+  } catch {
+    throw new Error(
+      "Reviewed release tag is not in protected public main history",
+    );
+  }
   assert.equal(
     (await exec("git", ["status", "--porcelain"], { cwd: root })).stdout.trim(),
     "",

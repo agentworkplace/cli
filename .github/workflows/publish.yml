@@ -26,10 +26,11 @@ permissions:
 concurrency:
   group: npm-publication
   cancel-in-progress: false
+  queue: max
 
 jobs:
   publish:
-    if: github.repository_owner == 'agentworkplace' && github.ref == 'refs/heads/main' && github.run_attempt == 1
+    if: github.repository_owner == 'agentworkplace' && startsWith(github.ref, 'refs/tags/v') && github.run_attempt == 1
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
@@ -43,6 +44,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ github.sha }}
+          fetch-depth: 0
           persist-credentials: false
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
