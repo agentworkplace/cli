@@ -89,10 +89,26 @@ try {
     join(packageDir, "package.json"),
     JSON.stringify(release, null, 2) + "\n",
   );
-  for (const name of ["README.md", "LICENSE", "NOTICE", "CHANGELOG.md"])
+  for (const name of ["LICENSE", "NOTICE", "CHANGELOG.md"])
     await copyFile(join(root, name), join(packageDir, name));
-  const readme = await readFile(join(packageDir, "README.md"), "utf8");
+  const readme = await readFile(join(root, "README.md"), "utf8");
   assert.ok(readme.includes(`${source.name}@${source.version}`));
+  assert.ok(readme.includes("./.github/assets/readme-banner.png"));
+  const repositoryName = isSdk ? "sdk-ts" : "cli";
+  const github = `https://github.com/agentworkplace/${repositoryName}`;
+  await writeFile(
+    join(packageDir, "README.md"),
+    readme
+      .replaceAll(
+        "./.github/assets/readme-banner.png",
+        `https://raw.githubusercontent.com/agentworkplace/${repositoryName}/main/.github/assets/readme-banner.png`,
+      )
+      .replaceAll(
+        'href="./package.json"',
+        `href="${github}/blob/main/package.json"`,
+      )
+      .replaceAll('href="./LICENSE"', `href="${github}/blob/main/LICENSE"`),
+  );
   for (const module of await modules(join(root, "src"))) {
     for (const extension of [".js", ".d.ts"]) {
       const name = module + extension;
