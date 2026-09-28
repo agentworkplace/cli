@@ -7,13 +7,29 @@ export class CliConfigurationError extends Error {
   }
 }
 
+export class FeedbackCommandError extends Error {
+  constructor(
+    readonly submissionId: string,
+    readonly original: unknown,
+  ) {
+    super("Feedback submission failed");
+    this.name = "FeedbackCommandError";
+  }
+}
+
 export interface PresentedError {
   message: string;
   status?: number;
   code?: string;
+  submissionId?: string;
 }
 
 export function presentError(error: unknown): PresentedError {
+  if (error instanceof FeedbackCommandError)
+    return {
+      ...presentError(error.original),
+      submissionId: error.submissionId,
+    };
   if (error instanceof CliConfigurationError) {
     return { message: error.message };
   }

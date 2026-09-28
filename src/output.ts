@@ -31,4 +31,6 @@ export function writeError(
   const suffix = details.length === 0 ? "" : ` (${details.join(", ")})`;
 
   write(`Error: ${presented.message}${suffix}\n`);
+  if (presented.submissionId)
+    write(`Retry with --submission-id ${presented.submissionId}\n`);
 }

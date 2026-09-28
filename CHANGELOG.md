@@ -1,5 +1,11 @@
 # agent-workplace
 
+## 0.3.0
+
+### Minor Changes
+
+- Add noninteractive private feedback submission with stable retry receipts and optional category and request ID.
+
 ## 0.2.0
 
 ### Minor Changes
