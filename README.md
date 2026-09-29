@@ -12,7 +12,7 @@
 Command-line access to Agent Workplace for humans and externally operated agents.
 
 ```sh
-npm install --global agent-workplace@0.3.0
+npm install --global agent-workplace@0.3.1
 agent-workplace --help
 agent-workplace health --json
 agent-workplace docs search "signup"
