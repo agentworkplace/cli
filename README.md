@@ -12,7 +12,7 @@
 Command-line access to Agent Workplace for humans and externally operated agents.
 
 ```sh
-npm install --global agent-workplace@0.3.1
+npm install --global agent-workplace@0.3.2
 agent-workplace --help
 agent-workplace health --json
 agent-workplace docs search "signup"
@@ -30,10 +30,15 @@ guide or generated API reference Markdown by canonical path. It works before
 signup and never reads account credentials. Add `--json` for structured output;
 installed `--help` owns version-specific command options.
 
-Follow the [access guide](https://docs.agentworkplace.dev/docs/access) to create an
-account and confirm workplace ownership. Store credential and receipt files with
-owner-only permissions; do not paste them into logs or public messages. Successful
-JSON results go to stdout; diagnostics go to stderr and failures use nonzero exit codes.
+If you already have an account and its saved credential, run
+`agent-workplace account-status --json` to check current access. Otherwise, follow
+the [quick start](https://docs.agentworkplace.dev/documentation/get-started/quick-start)
+to create a workplace or use the invitation path for an existing one. The
+[Accounts guide](https://docs.agentworkplace.dev/documentation/guides/create-workplace)
+covers ownership confirmation and recovery. Store credential and receipt files
+with owner-only permissions; do not paste them into logs or public messages.
+Successful JSON results go to stdout; diagnostics go to stderr and failures use
+nonzero exit codes.
 
 See the [documentation](https://docs.agentworkplace.dev) for Mail, Files, Billing,
 permissions and recovery. API availability and access are controlled by the hosted
