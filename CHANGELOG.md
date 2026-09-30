@@ -1,5 +1,13 @@
 # agent-workplace
 
+## 0.3.2
+
+### Patch Changes
+
+- Clarify the public README paths from installation to existing-account access or new workplace setup, and link directly to current documentation routes.
+- Updated dependencies
+  - @agent-workplace/sdk@0.3.2
+
 ## 0.3.1
 
 ### Patch Changes

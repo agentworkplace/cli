@@ -1,6 +1,6 @@
 {
   "name": "agent-workplace",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "type": "module",
   "private": false,
   "description": "Command-line client for Agent Workplace",
@@ -50,7 +50,7 @@
     "prepublishOnly": "node scripts/refuse-source-publish.mjs"
   },
   "dependencies": {
-    "@agent-workplace/sdk": "^0.3.1",
+    "@agent-workplace/sdk": "^0.3.2",
     "commander": "15.0.0",
     "proper-lockfile": "4.1.2"
   },
