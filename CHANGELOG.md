@@ -1,5 +1,33 @@
 # agent-workplace
 
+## 0.4.0
+
+### Minor Changes
+
+- Replace agent-mediated ownership confirmation with a private email link that
+  the nominated human reviews and explicitly accepts in the dashboard.
+
+  Breaking: the SDK removes `confirmOwnership(apiKey, input)` and adds
+  `previewOwnership(input)` and `acceptOwnership(input)` for the human browser
+  flow. Acceptance creates the human session through cookies; it never returns a
+  session token in JSON. The CLI's `confirm-ownership` command now immediately
+  reports its retirement without reading stdin or using saved credentials.
+  Agents should request a new ownership email and use authenticated account
+  status to discover completion. Never request the human's private link.
+
+- Allow human invitation creation without a local file, using automatic server-side
+  invitation email. Add optional private link output with an explicit dashboard
+  origin, preserve legacy JSON output, and report recovery guidance when a file
+  cannot be saved after issuance.
+
+### Patch Changes
+
+- Updated dependencies
+- Updated dependencies
+- Updated dependencies
+- Updated dependencies
+  - @agent-workplace/sdk@0.4.0
+
 ## 0.3.2
 
 ### Patch Changes

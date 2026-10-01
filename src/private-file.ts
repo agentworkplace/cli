@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { constants, type Stats } from "node:fs";
-import { lstat, mkdir, open, rename, unlink } from "node:fs/promises";
+import { link, lstat, mkdir, open, rename, unlink } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import lockfile from "proper-lockfile";
 import { CliConfigurationError } from "./errors.js";
@@ -17,18 +17,57 @@ function checkPermissions(stat: Stats, directory: boolean, label: string) {
     );
 }
 
-export async function withPrivateJsonFile<Value, Result>(
+type PrivateFileOptions<Value> = {
+  label: string;
+  maximumBytes: number;
+  validate(value: unknown): Value;
+  createOnly?: boolean;
+};
+type PrivateFileOperation<Value, Result> = (store: {
+  assertOwned(): void;
+  read(): Promise<Value | undefined>;
+  write(value: Value): Promise<void>;
+}) => Promise<Result>;
+
+export function withPrivateJsonFile<Value, Result>(
+  path: string,
+  options: PrivateFileOptions<Value>,
+  operation: PrivateFileOperation<Value, Result>,
+) {
+  return withPrivateFile(
+    path,
+    {
+      ...options,
+      decode: (text: string) => JSON.parse(text) as unknown,
+      encode: (value: Value) => JSON.stringify(value) + "\n",
+    },
+    operation,
+  );
+}
+
+export function withPrivateTextFile<Result>(
+  path: string,
+  options: PrivateFileOptions<string>,
+  operation: PrivateFileOperation<string, Result>,
+) {
+  return withPrivateFile(
+    path,
+    {
+      ...options,
+      decode: (text: string) => text.trimEnd(),
+      encode: (value: string) => value + "\n",
+    },
+    operation,
+  );
+}
+
+async function withPrivateFile<Value, Result>(
   configuredPath: string,
-  options: {
-    label: string;
-    maximumBytes: number;
-    validate(value: unknown): Value;
+  options: PrivateFileOptions<Value> & {
+    decode(text: string): unknown;
+    encode(value: Value): string;
   },
-  operation: (store: {
-    assertOwned(): void;
-    read(): Promise<Value | undefined>;
-    write(value: Value): Promise<void>;
-  }) => Promise<Result>,
+  operation: PrivateFileOperation<Value, Result>,
 ) {
   const name = options.label.toLowerCase();
   // POSIX mode bits cannot establish a restrictive Windows ACL. Fail closed.
@@ -83,7 +122,7 @@ export async function withPrivateJsonFile<Value, Result>(
           if ((await handle.stat()).size > options.maximumBytes)
             throw new CliConfigurationError(`Invalid ${name} file`);
           return options.validate(
-            JSON.parse(await handle.readFile("utf8")) as unknown,
+            options.decode(await handle.readFile("utf8")),
           );
         } catch (error) {
           if (error instanceof CliConfigurationError) throw error;
@@ -95,7 +134,7 @@ export async function withPrivateJsonFile<Value, Result>(
       async write(value) {
         checkLock();
         options.validate(value);
-        const serialized = JSON.stringify(value) + "\n";
+        const serialized = options.encode(value);
         if (Buffer.byteLength(serialized, "utf8") > options.maximumBytes)
           throw new CliConfigurationError(`Invalid ${name} file`);
         // Reject an existing unsafe destination rather than silently replacing it.
@@ -118,7 +157,8 @@ export async function withPrivateJsonFile<Value, Result>(
           await handle.sync();
           await handle.close();
           checkLock();
-          await rename(temporary, path);
+          if (options.createOnly) await link(temporary, path);
+          else await rename(temporary, path);
           const parent = await open(directory, constants.O_RDONLY);
           try {
             await parent.sync();

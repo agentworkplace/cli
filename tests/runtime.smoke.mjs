@@ -74,6 +74,24 @@ try {
   await new Promise((resolve) => server.close(resolve));
 }
 
+// Keep stdin open: the retired command must explain the human flow immediately.
+const retired = spawn(
+  process.execPath,
+  [
+    process.argv[2] ??
+      fileURLToPath(new URL("../dist/index.js", import.meta.url)),
+    "confirm-ownership",
+  ],
+  { stdio: ["pipe", "pipe", "pipe"], timeout: 5000 },
+);
+let retirementOutput = "";
+retired.stderr.on("data", (chunk) => {
+  retirementOutput += chunk;
+});
+const [retirementCode] = await once(retired, "close");
+assert.equal(retirementCode, 1);
+assert.match(retirementOutput, /ownership email/);
+
 const { testDownloadCrashRecovery } =
   await import("./files-download.runtime.mjs");
 await testDownloadCrashRecovery();

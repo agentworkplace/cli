@@ -224,39 +224,6 @@ export async function executeNominationChange(
   );
 }
 
-export async function executeOwnershipConfirmation(
-  options: AccessCommandOptions,
-  input: {
-    nominationId: string;
-    code: string;
-    ownerMailboxAddressChoice?: MailboxAddressChoice;
-  },
-) {
-  await executeSavedOperation(options, (client, key) =>
-    client.confirmOwnership(key, input),
-  );
-}
-
-/** Bounded non-interactive input; codes never enter argv or credential storage. */
-export async function readOwnershipCode(
-  input: AsyncIterable<string | Uint8Array>,
-) {
-  let value = "";
-  for await (const chunk of input) {
-    value +=
-      typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8");
-    if (value.length > 64)
-      throw new CliConfigurationError(
-        "Expected one six-digit ownership code on standard input",
-      );
-  }
-  if (!/^\d{6}(?:\r?\n)?$/.test(value))
-    throw new CliConfigurationError(
-      "Expected one six-digit ownership code on standard input",
-    );
-  return value.trim();
-}
-
 export async function executeSavedOperation(
   options: AccessCommandOptions,
   operation: (

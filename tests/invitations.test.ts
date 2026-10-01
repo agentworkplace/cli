@@ -3,7 +3,11 @@ import { randomBytes, randomUUID } from "node:crypto";
 import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { AgentWorkplace, AgentWorkplaceError } from "@agent-workplace/sdk";
+import {
+  AgentWorkplace,
+  AgentWorkplaceError,
+  parseHumanInvitationLink,
+} from "@agent-workplace/sdk";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { withInvitation } from "../src/invitation-file.js";
 import { withCredentials } from "../src/credentials.js";
@@ -95,6 +99,193 @@ async function fixture() {
     attemptFile: `${credentials}.invitation.json`,
   };
 }
+
+async function humanFixture() {
+  const f = await fixture();
+  await withCredentials(f.credentials, (store) =>
+    store.write({
+      version: 1,
+      kind: "account",
+      origin: f.saved.origin,
+      credential: {
+        accountId: f.saved.accountId,
+        workplaceId: f.saved.workplaceId,
+        key: "admin-key",
+      },
+    }),
+  );
+  const create = vi
+    .spyOn(AgentWorkplace.prototype, "createHumanInvitation")
+    .mockResolvedValue({
+      id: f.saved.invitationId,
+      workplaceId: f.saved.workplaceId,
+      accountId: f.saved.accountId,
+      issuerId: randomUUID(),
+      kind: "human",
+      name: "Human",
+      role: "member",
+      state: "pending",
+      createdAt: "2026-09-16T00:00:00.000Z",
+      expiresAt: f.admission.recoveryExpiresAt,
+      code: f.saved.code,
+    });
+  const args = [
+    "invitations",
+    "create-human",
+    "--email",
+    "human@example.test",
+    "--json",
+  ];
+  return { ...f, create, args, linkPath: join(f.directory, "human.txt") };
+}
+
+describe("human invitation email and optional output", () => {
+  it("creates without a local file and returns only safe metadata", async () => {
+    const f = await humanFixture();
+    const result = await f.run(f.args);
+    expect(result).toEqual({
+      code: 0,
+      stderr: "",
+      stdout:
+        JSON.stringify({
+          invitationId: f.saved.invitationId,
+          accountId: f.saved.accountId,
+          workplaceId: f.saved.workplaceId,
+          role: "member",
+          expiresAt: f.admission.recoveryExpiresAt,
+        }) + "\n",
+    });
+    expect(f.create).toHaveBeenCalledOnce();
+    expect(f.create).toHaveBeenCalledWith(
+      { apiKey: "admin-key" },
+      { email: "human@example.test" },
+    );
+  });
+  it.each([true, false])(
+    "writes a private link with safe output (json=%s)",
+    async (json) => {
+      const f = await humanFixture();
+      const args = [
+        ...(json ? f.args : f.args.slice(0, -1)),
+        "--invitation-link-file",
+        f.linkPath,
+        "--dashboard-url",
+        "https://app.example.test",
+      ];
+      const result = await f.run(args);
+      expect(result.code).toBe(0);
+      expect(result.stderr).toBe("");
+      expect(JSON.parse(result.stdout)).toMatchObject({
+        invitationLinkFile: f.linkPath,
+      });
+      expect(result.stdout).not.toContain(f.saved.code);
+      expect(result.stdout).not.toContain("human@example.test");
+      expect(result.stdout).not.toContain("https://app.example.test");
+      const text = await readFile(f.linkPath, "utf8");
+      expect(text.endsWith("\n")).toBe(true);
+      expect(text.split("\n")).toHaveLength(2);
+      expect(
+        parseHumanInvitationLink(text.trimEnd(), {
+          dashboardOrigin: "https://app.example.test",
+          apiOrigin: f.saved.origin,
+        }),
+      ).toMatchObject({ code: f.saved.code });
+      expect((await stat(f.linkPath)).mode & 0o777).toBe(0o600);
+      expect((await f.run(args)).code).toBe(1);
+      expect(f.create).toHaveBeenCalledOnce();
+    },
+  );
+  it.each([
+    ["--dashboard-url", "https://app.example.test"],
+    ["--invitation-link-file", "new.txt"],
+    [
+      "--invitation-file",
+      "old.json",
+      "--dashboard-url",
+      "https://app.example.test",
+    ],
+    [
+      "--invitation-file",
+      "old.json",
+      "--invitation-link-file",
+      "new.txt",
+      "--dashboard-url",
+      "https://app.example.test",
+    ],
+    [
+      "--invitation-link-file",
+      "new.txt",
+      "--dashboard-url",
+      "https://app.example.test/path",
+    ],
+  ])(
+    "rejects incompatible or invalid output options before issuance: %j",
+    async (...options) => {
+      const f = await humanFixture();
+      const result = await f.run([...f.args, ...options]);
+      expect(result.code).toBe(1);
+      expect(f.create).not.toHaveBeenCalled();
+    },
+  );
+  it("rejects unsafe destinations before issuance", async () => {
+    const f = await humanFixture();
+    await fs.symlink(f.credentials, f.linkPath);
+    const args = [
+      ...f.args,
+      "--invitation-link-file",
+      f.linkPath,
+      "--dashboard-url",
+      "https://app.example.test",
+    ];
+    expect((await f.run(args)).code).toBe(1);
+    await fs.unlink(f.linkPath);
+    await fs.chmod(f.directory, 0o755);
+    expect((await f.run(args)).code).toBe(1);
+    expect(f.create).not.toHaveBeenCalled();
+  });
+  it("does not overwrite a destination created while issuance is in flight", async () => {
+    const f = await humanFixture();
+    const response = await f.create.getMockImplementation()!(
+      { apiKey: "admin-key" },
+      { email: "human@example.test" },
+    );
+    f.create.mockImplementationOnce(async () => {
+      await fs.writeFile(f.linkPath, "keep existing content", { mode: 0o600 });
+      return response;
+    });
+    const result = await f.run([
+      ...f.args,
+      "--invitation-link-file",
+      f.linkPath,
+      "--dashboard-url",
+      "https://app.example.test",
+    ]);
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain("may already have succeeded");
+    expect(await readFile(f.linkPath, "utf8")).toBe("keep existing content");
+    expect(f.create).toHaveBeenCalledOnce();
+  });
+  it("reports post-issuance write failure without exposing proof or retrying issuance", async () => {
+    const f = await humanFixture();
+    vi.spyOn(fs, "link").mockRejectedValueOnce(new Error(f.saved.code));
+    const result = await f.run([
+      ...f.args,
+      "--invitation-link-file",
+      f.linkPath,
+      "--dashboard-url",
+      "https://app.example.test",
+    ]);
+    expect(result.code).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toContain("may already have succeeded");
+    expect(result.stderr).toContain("invitations list");
+    expect(result.stderr).not.toContain(f.saved.code);
+    expect(f.create).toHaveBeenCalledOnce();
+    await expect(readFile(f.linkPath)).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
+});
 
 describe("private invitation CLI journey", () => {
   it("issues a human bearer file privately without email or code in output", async () => {

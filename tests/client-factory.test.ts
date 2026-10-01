@@ -55,7 +55,6 @@ const commands = [
     "other@example.test",
   ],
   ["cancel-nomination", "--nomination-id", id],
-  ["confirm-ownership", "--nomination-id", id],
   ["accounts"],
   ["leave"],
   ["remove-account", "--account-id", id],

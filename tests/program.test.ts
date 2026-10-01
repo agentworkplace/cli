@@ -40,27 +40,32 @@ afterEach(() => {
 });
 
 describe("agent-workplace CLI", () => {
-  it.each(["12345", "1234567", "123456\n654321", "x".repeat(65)])(
-    "rejects malformed confirmation stdin without exposing it",
-    async (input) => {
-      const result = await invoke(
-        [
-          "confirm-ownership",
-          "--nomination-id",
-          "1c9c6078-c31d-40a0-8452-43038dc056e9",
-          "--json",
-        ],
-        {
-          input: (async function* () {
-            yield input;
-          })(),
-        },
-      );
+  it.each([
+    { args: [] },
+    { args: ["--nomination-id", "1c9c6078-c31d-40a0-8452-43038dc056e9"] },
+  ])(
+    "retires ownership confirmation without touching stdin or a client (%j)",
+    async ({ args }) => {
+      const read = vi.fn(() => {
+        throw new Error("stdin must not be opened");
+      });
+      const client = vi.fn(() => {
+        throw new Error("client must not be created");
+      });
+      const result = await invoke(["confirm-ownership", ...args, "--json"], {
+        input: { [Symbol.asyncIterator]: read },
+        createProductClient: client,
+      });
       expect(result.exitCode).toBe(1);
       expect(result.stdout).toBe("");
-      expect(result.stderr).toBe(
-        '{"error":{"message":"Expected one six-digit ownership code on standard input"}}\n',
-      );
+      expect(JSON.parse(result.stderr)).toEqual({
+        error: {
+          message:
+            "confirm-ownership is retired. Request a new ownership email with resend-nomination, then ask the nominated human to review and accept ownership using its private link. Do not ask them to share the link or a code. Check access status for completion.",
+        },
+      });
+      expect(read).not.toHaveBeenCalled();
+      expect(client).not.toHaveBeenCalled();
     },
   );
   it("prints help", async () => {

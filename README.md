@@ -11,8 +11,12 @@
 
 Command-line access to Agent Workplace for humans and externally operated agents.
 
+> [!WARNING]
+> **Early beta**\
+> Agent Workplace is actively evolving. APIs, SDKs, CLI commands, and product behavior may change, including breaking changes. Check the [product changelog](https://agentworkplace.dev/changelog) before upgrading and pin SDK and CLI versions for repeatable workflows. Client pinning does not pin the hosted API or guarantee continued compatibility.
+
 ```sh
-npm install --global agent-workplace@0.3.2
+npm install --global agent-workplace@0.4.0
 agent-workplace --help
 agent-workplace health --json
 agent-workplace docs search "signup"

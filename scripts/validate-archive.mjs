@@ -81,7 +81,7 @@ try {
       [
         "--input-type=module",
         "-e",
-        'import { AgentWorkplace } from "@agent-workplace/sdk"; new AgentWorkplace({baseUrl:"https://api.example.test"});',
+        'import { AgentWorkplace, DocumentationClient } from "@agent-workplace/sdk"; new AgentWorkplace(); new DocumentationClient(); new AgentWorkplace({baseUrl:"https://api.example.test"});',
       ],
       { cwd: consumer },
     );
