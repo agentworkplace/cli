@@ -3,6 +3,8 @@ import { resolve } from "node:path";
 import {
   AgentWorkplaceError,
   parseHumanInvitationFile,
+  createHumanInvitationLink,
+  parseHumanInvitationLink,
   type InvitationAdmission,
   type MailboxAddressChoice,
 } from "@agent-workplace/sdk";
@@ -20,7 +22,7 @@ import {
   type InvitationAttempt,
 } from "../invitation-file.js";
 import { executeSavedOperation, type AccessCommandOptions } from "./access.js";
-import { withPrivateJsonFile } from "../private-file.js";
+import { withPrivateJsonFile, withPrivateTextFile } from "../private-file.js";
 
 function separatePaths(options: AccessCommandOptions, invitationFile?: string) {
   const credentials = credentialFilePath(options.credentials);
@@ -95,50 +97,126 @@ export async function executeInvitationCreate(
 }
 export async function executeHumanInvitationCreate(
   options: AccessCommandOptions & {
-    invitationFile: string;
+    invitationFile?: string;
+    invitationLinkFile?: string;
+    dashboardUrl?: string;
     email: string;
     name?: string;
     role?: "admin" | "member";
   },
 ) {
-  separatePaths(options, options.invitationFile);
-  await executeSavedOperation(options, async (client, key, _status, origin) =>
-    withPrivateJsonFile(
-      options.invitationFile,
-      {
-        label: "Human invitation",
-        maximumBytes: 4096,
-        validate: parseHumanInvitationFile,
-      },
-      async (store) => {
-        if (await store.read())
-          throw new CliConfigurationError(
-            "Invitation file already exists; choose a new path",
-          );
-        const issued = await client.createHumanInvitation(
-          { apiKey: key },
-          { email: options.email, name: options.name, role: options.role },
+  if (options.invitationFile && options.invitationLinkFile)
+    throw new CliConfigurationError("Choose only one invitation output file");
+  if (Boolean(options.invitationLinkFile) !== Boolean(options.dashboardUrl))
+    throw new CliConfigurationError(
+      "--dashboard-url is required only with --invitation-link-file",
+    );
+  const path = options.invitationFile ?? options.invitationLinkFile;
+  separatePaths(options, path);
+  await executeSavedOperation(options, async (client, key, _status, origin) => {
+    const linkOptions = {
+      dashboardOrigin: options.dashboardUrl ?? "",
+      apiOrigin: origin,
+    };
+    if (options.invitationLinkFile) {
+      try {
+        createHumanInvitationLink(
+          {
+            version: 1,
+            kind: "human-invitation",
+            origin,
+            invitationId: randomUUID(),
+            workplaceId: randomUUID(),
+            accountId: randomUUID(),
+            code: randomBytes(32).toString("base64url"),
+          },
+          linkOptions,
         );
-        await store.write({
-          version: 1,
-          kind: "human-invitation",
-          origin,
-          invitationId: issued.id,
-          workplaceId: issued.workplaceId,
-          accountId: issued.accountId,
-          code: issued.code,
-        });
-        return {
-          invitationId: issued.id,
-          accountId: issued.accountId,
-          workplaceId: issued.workplaceId,
-          role: issued.role,
-          expiresAt: issued.expiresAt,
-          invitationFile: resolve(options.invitationFile),
-        };
-      },
-    ),
-  );
+      } catch {
+        throw new CliConfigurationError(
+          "Specify a canonical HTTPS dashboard origin, or HTTP on loopback",
+        );
+      }
+    }
+    let issued = false;
+    const create = async () => {
+      const value = await client.createHumanInvitation(
+        { apiKey: key },
+        { email: options.email, name: options.name, role: options.role },
+      );
+      issued = true;
+      return value;
+    };
+    const metadata = (value: Awaited<ReturnType<typeof create>>) => ({
+      invitationId: value.id,
+      accountId: value.accountId,
+      workplaceId: value.workplaceId,
+      role: value.role,
+      expiresAt: value.expiresAt,
+    });
+    if (!path) return metadata(await create());
+    const record = (value: Awaited<ReturnType<typeof create>>) => ({
+      version: 1 as const,
+      kind: "human-invitation" as const,
+      origin,
+      invitationId: value.id,
+      workplaceId: value.workplaceId,
+      accountId: value.accountId,
+      code: value.code,
+    });
+    try {
+      if (options.invitationLinkFile) {
+        return await withPrivateTextFile(
+          path,
+          {
+            label: "Human invitation link",
+            maximumBytes: 8192,
+            createOnly: true,
+            validate(value) {
+              if (typeof value !== "string") throw new Error("Invalid link");
+              parseHumanInvitationLink(value, linkOptions);
+              return value;
+            },
+          },
+          async (store) => {
+            if ((await store.read()) !== undefined)
+              throw new CliConfigurationError(
+                "Invitation file already exists; choose a new path",
+              );
+            const value = await create();
+            await store.write(
+              createHumanInvitationLink(record(value), linkOptions),
+            );
+            return { ...metadata(value), invitationLinkFile: resolve(path) };
+          },
+        );
+      }
+      return await withPrivateJsonFile(
+        path,
+        {
+          label: "Human invitation",
+          maximumBytes: 4096,
+          validate: parseHumanInvitationFile,
+          createOnly: true,
+        },
+        async (store) => {
+          if ((await store.read()) !== undefined)
+            throw new CliConfigurationError(
+              "Invitation file already exists; choose a new path",
+            );
+          const value = await create();
+          await store.write(record(value));
+          return { ...metadata(value), invitationFile: resolve(path) };
+        },
+      );
+    } catch (error) {
+      if (issued)
+        throw new CliConfigurationError(
+          "Invitation creation and email delivery may already have succeeded, but saving the private file failed. Use invitations list to inspect the invitation; cancel it before issuing a replacement if needed.",
+        );
+      throw error;
+    }
+  });
 }
 export async function executeInvitationList(
   options: AccessCommandOptions,

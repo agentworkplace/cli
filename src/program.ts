@@ -92,8 +92,6 @@ import {
   executeNominationChange,
   executeCurrentNomination,
   executeNominationAuthorization,
-  executeOwnershipConfirmation,
-  readOwnershipCode,
 } from "./commands/access.js";
 import { CliConfigurationError } from "./errors.js";
 import { Command, CommanderError, Option } from "commander";
@@ -555,9 +553,17 @@ export async function runCli(
         "admin",
       ]),
     )
-    .requiredOption(
+    .option(
       "--invitation-file <path>",
-      "New private file for the human invitation",
+      "Optional new private legacy human invitation file",
+    )
+    .option(
+      "--invitation-link-file <path>",
+      "Optional new private invitation link text file",
+    )
+    .option(
+      "--dashboard-url <origin>",
+      "Trusted dashboard origin for link file output",
     )
     .option("--json", "output machine-readable JSON")
     .action(
@@ -565,7 +571,9 @@ export async function runCli(
         email: string;
         name?: string;
         role?: "member" | "admin";
-        invitationFile: string;
+        invitationFile?: string;
+        invitationLinkFile?: string;
+        dashboardUrl?: string;
         json?: boolean;
       }) => {
         try {
@@ -2255,67 +2263,21 @@ export async function runCli(
 
   program
     .command("confirm-ownership")
-    .option(
-      "--owner-mailbox-name <label>",
-      "Owner-requested exact mailbox name",
-    )
-    .option(
-      "--owner-mailbox-default",
-      "Use the automatic owner mailbox address",
-    )
     .description(
-      "Submit the human's ownership code; does not create a human login session",
+      "Retired: the nominated human confirms through their private email link",
     )
-    .requiredOption(
-      "--nomination-id <id>",
-      "Nomination ID from authenticated status",
-    )
+    .option("--nomination-id <id>", "Retired option")
+    .option("--owner-mailbox-name <label>", "Retired option")
+    .option("--owner-mailbox-default", "Retired option")
     .option("--json", "output machine-readable JSON")
-    .action(
-      async (commandOptions: {
-        nominationId: string;
-        json?: boolean;
-        ownerMailboxName?: string;
-        ownerMailboxDefault?: boolean;
-      }) => {
-        try {
-          if (!options.input && process.stdin.isTTY)
-            throw new CliConfigurationError(
-              "Supply the ownership code through standard input",
-            );
-          if (
-            commandOptions.ownerMailboxName !== undefined &&
-            commandOptions.ownerMailboxDefault
-          )
-            throw new CliConfigurationError(
-              "Choose only one owner mailbox address option",
-            );
-          const code = await readOwnershipCode(options.input ?? process.stdin);
-          await executeOwnershipConfirmation(
-            {
-              ...productOptions(),
-              json: commandOptions.json ?? false,
-              write: writeOut,
-            },
-            {
-              nominationId: commandOptions.nominationId,
-              code,
-              ownerMailboxAddressChoice:
-                commandOptions.ownerMailboxName !== undefined
-                  ? {
-                      kind: "exact",
-                      localPart: commandOptions.ownerMailboxName,
-                    }
-                  : commandOptions.ownerMailboxDefault
-                    ? { kind: "automatic" }
-                    : undefined,
-            },
-          );
-        } catch (error) {
-          failure = { error, json: commandOptions.json ?? false };
-        }
-      },
-    );
+    .action((commandOptions: { json?: boolean }) => {
+      failure = {
+        error: new CliConfigurationError(
+          "confirm-ownership is retired. Request a new ownership email with resend-nomination, then ask the nominated human to review and accept ownership using its private link. Do not ask them to share the link or a code. Check access status for completion.",
+        ),
+        json: commandOptions.json ?? false,
+      };
+    });
   program
     .command("correct-nomination")
     .description(
