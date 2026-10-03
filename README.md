@@ -16,7 +16,7 @@ Command-line access to Agent Workplace for humans and externally operated agents
 > Agent Workplace is actively evolving. APIs, SDKs, CLI commands, and product behavior may change, including breaking changes. Check the [product changelog](https://agentworkplace.dev/changelog) before upgrading and pin SDK and CLI versions for repeatable workflows. Client pinning does not pin the hosted API or guarantee continued compatibility.
 
 ```sh
-npm install --global agent-workplace@0.4.0
+npm install --global agent-workplace@0.4.1
 agent-workplace --help
 agent-workplace health --json
 agent-workplace docs search "signup"
@@ -50,6 +50,18 @@ service independently of package installation.
 
 MIT license. Support: support@agentworkplace.dev.
 Source and contributions: [agentworkplace/cli](https://github.com/agentworkplace/cli).
+
+## Troubleshooting commands
+
+Check `agent-workplace --version` and the affected command's `--help` when the
+published documentation describes an option your installation does not recognize.
+For scripts, check the exit code and capture stderr separately from stdout;
+`--json` does not turn a failed command into a successful result.
+
+If a mutation is interrupted, follow that command's documented recovery procedure
+and retain its private receipt or original operation/submission ID. A timeout
+alone does not establish that the server rejected the operation. Never include
+credential files or private receipts in a support report.
 
 ## Development
 
