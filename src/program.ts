@@ -1,3 +1,15 @@
+import {
+  executeNotificationList,
+  executeNotificationStatus,
+  executeNotificationRead,
+  executeNotificationWait,
+  executeNotificationEndpointRegister,
+  executeNotificationEndpointList,
+  executeNotificationEndpointInspect,
+  executeNotificationEndpointTest,
+  executeNotificationEndpointRemove,
+  NotificationWaitCanceled,
+} from "./commands/notifications.js";
 import { executeMailCopy } from "./commands/mail-copy.js";
 import { executeFeedbackSend } from "./commands/feedback.js";
 import { executeMailExport } from "./commands/mail-export.js";
@@ -158,6 +170,139 @@ export async function runCli(
     baseUrl: apiUrlOverride,
     createProductClient: options.createProductClient,
   });
+
+  const notifications = program
+    .command("notifications")
+    .description("Read notifications, manage endpoints, and wait for activity");
+  type NotificationCommandInput = {
+    json?: boolean;
+    account?: string;
+    all?: boolean;
+    after?: string;
+    limit?: string;
+    id?: string;
+    through?: string;
+    file?: string;
+  };
+  const notificationAction =
+    (
+      run: (
+        input: NotificationCommandInput &
+          import("./commands/access.js").AccessCommandOptions,
+      ) => Promise<void>,
+    ) =>
+    async (input: NotificationCommandInput) => {
+      try {
+        await run({
+          ...productOptions(),
+          ...input,
+          json: input.json ?? false,
+          write: writeOut,
+        });
+      } catch (error) {
+        failure = { error, json: input.json ?? false };
+      }
+    };
+  notifications
+    .command("list")
+    .option("--account <id>", "Owner/admin inspection target")
+    .option("--all", "Include read items")
+    .option("--after <cursor>", "Continue a list page")
+    .option("--limit <count>", "Page size, at most 100")
+    .option("--json", "output machine-readable JSON")
+    .action(notificationAction(executeNotificationList));
+  notifications
+    .command("status")
+    .option("--account <id>", "Owner/admin inspection target")
+    .option("--json", "output machine-readable JSON")
+    .action(notificationAction(executeNotificationStatus));
+  notifications
+    .command("read")
+    .option("--id <id>", "Notification ID")
+    .option("--all", "Acknowledge all items through the observed position")
+    .requiredOption(
+      "--through <position>",
+      "Observed account notification position",
+    )
+    .option("--json", "output machine-readable JSON")
+    .action(
+      notificationAction((input) =>
+        executeNotificationRead({ ...input, through: input.through ?? "" }),
+      ),
+    );
+  for (const command of ["wait", "watch"] as const)
+    notifications
+      .command(command)
+      .description(
+        command === "wait"
+          ? "Wait for unread activity, print one JSON line, and exit"
+          : "Print new unread activity as JSON lines at least 60 seconds apart",
+      )
+      .option("--after <position>", "Previously printed notification position")
+      .option("--json", "output machine-readable JSON lines")
+      .action(
+        notificationAction((input) =>
+          executeNotificationWait({ ...input, watch: command === "watch" }),
+        ),
+      );
+
+  const endpoints = notifications
+    .command("endpoints")
+    .description("Manage account notification endpoints");
+  endpoints
+    .command("register")
+    .description(
+      "Register from JSON; Standard prints a secret once. Store output securely.",
+    )
+    .requiredOption(
+      "--file <path>",
+      "Registration JSON (url, profile, token?, accountId?); - reads stdin",
+    )
+    .option("--json", "output machine-readable JSON")
+    .action(
+      notificationAction((input) =>
+        executeNotificationEndpointRegister({
+          ...input,
+          file: input.file ?? "",
+          input: options.input,
+        }),
+      ),
+    );
+  endpoints
+    .command("list")
+    .option("--account <id>", "Owner/admin management target")
+    .option("--json", "output machine-readable JSON")
+    .action(notificationAction(executeNotificationEndpointList));
+  for (const command of ["inspect", "remove"] as const)
+    endpoints
+      .command(command)
+      .requiredOption("--id <id>", "Notification endpoint ID")
+      .option("--account <id>", "Owner/admin management target")
+      .option("--json", "output machine-readable JSON")
+      .action(
+        notificationAction((input) =>
+          (command === "inspect"
+            ? executeNotificationEndpointInspect
+            : executeNotificationEndpointRemove)({
+            ...input,
+            id: input.id ?? "",
+          }),
+        ),
+      );
+
+  endpoints
+    .command("test")
+    .description(
+      "Queue a test that can start a real receiver run; inspect for the result",
+    )
+    .requiredOption("--id <id>", "Notification endpoint ID")
+    .option("--account <id>", "Owner/admin management target")
+    .option("--json", "output machine-readable JSON")
+    .action(
+      notificationAction((input) =>
+        executeNotificationEndpointTest({ ...input, id: input.id ?? "" }),
+      ),
+    );
 
   program
     .command("feedback")
@@ -2410,7 +2555,9 @@ export async function runCli(
 
   if (failure !== undefined) {
     writeError(failure.error, failure.json, writeErr);
-    return 1;
+    return failure.error instanceof NotificationWaitCanceled
+      ? failure.error.exitCode
+      : 1;
   }
 
   return 0;

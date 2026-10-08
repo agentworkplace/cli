@@ -9,6 +9,17 @@ import {
   parseFileReference,
 } from "@agent-workplace/sdk";
 
+// Only the monorepo's preliminary workspace check opts out of the expensive
+// probes. Packed validation, local commands and public CI keep the full default.
+const args = process.argv.slice(2);
+const transportOnly = args[0] === "--transport-only";
+if (transportOnly) args.shift();
+if (args.length > 1 || args[0]?.startsWith("-")) {
+  throw new Error("Usage: runtime.smoke.mjs [--transport-only] [CLI_ENTRY]");
+}
+const cliEntry =
+  args[0] ?? fileURLToPath(new URL("../dist/index.js", import.meta.url));
+
 const identity = "11111111-1111-4111-8111-111111111111";
 const prepared = prepareFileUpload(
   {
@@ -41,21 +52,12 @@ try {
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
   const client = new AgentWorkplace({ baseUrl });
   assert.deepEqual(await client.health(), { status: "ok" });
-  const child = spawn(
-    process.execPath,
-    [
-      process.argv[2] ??
-        fileURLToPath(new URL("../dist/index.js", import.meta.url)),
-      "health",
-      "--json",
-    ],
-    {
-      stdio: ["ignore", "pipe", "pipe"],
-      env: { ...process.env, AGENT_WORKPLACE_API_URL: baseUrl },
-      timeout: 10_000,
-      killSignal: "SIGKILL",
-    },
-  );
+  const child = spawn(process.execPath, [cliEntry, "health", "--json"], {
+    stdio: ["ignore", "pipe", "pipe"],
+    env: { ...process.env, AGENT_WORKPLACE_API_URL: baseUrl },
+    timeout: 10_000,
+    killSignal: "SIGKILL",
+  });
   let stdout = "";
   let stderr = "";
   child.stdout.on("data", (chunk) => {
@@ -75,15 +77,10 @@ try {
 }
 
 // Keep stdin open: the retired command must explain the human flow immediately.
-const retired = spawn(
-  process.execPath,
-  [
-    process.argv[2] ??
-      fileURLToPath(new URL("../dist/index.js", import.meta.url)),
-    "confirm-ownership",
-  ],
-  { stdio: ["pipe", "pipe", "pipe"], timeout: 5000 },
-);
+const retired = spawn(process.execPath, [cliEntry, "confirm-ownership"], {
+  stdio: ["pipe", "pipe", "pipe"],
+  timeout: 5000,
+});
 let retirementOutput = "";
 retired.stderr.on("data", (chunk) => {
   retirementOutput += chunk;
@@ -92,12 +89,20 @@ const [retirementCode] = await once(retired, "close");
 assert.equal(retirementCode, 1);
 assert.match(retirementOutput, /ownership email/);
 
-const { testDownloadCrashRecovery } =
-  await import("./files-download.runtime.mjs");
-await testDownloadCrashRecovery();
+if (!transportOnly) {
+  const { testNotificationPolling, testNotificationEndpoints } =
+    await import("./notifications.runtime.mjs");
+  await testNotificationPolling();
+  await testNotificationEndpoints();
 
-const { testExportCrashRecovery } = await import("./files-export.runtime.mjs");
-await testExportCrashRecovery();
+  const { testDownloadCrashRecovery } =
+    await import("./files-download.runtime.mjs");
+  await testDownloadCrashRecovery();
 
-const { testMailRecipients } = await import("./mail-recipients.runtime.mjs");
-await testMailRecipients();
+  const { testExportCrashRecovery } =
+    await import("./files-export.runtime.mjs");
+  await testExportCrashRecovery();
+
+  const { testMailRecipients } = await import("./mail-recipients.runtime.mjs");
+  await testMailRecipients();
+}
