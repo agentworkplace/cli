@@ -1,4 +1,15 @@
 import {
+  executeChatList,
+  executeChatRead,
+  executeChatEntries,
+  executeChatCreate,
+  executeChatPost,
+  executeChatAdd,
+  executeChatLeave,
+  executeChatRemove,
+  executeChatDelete,
+} from "./commands/chat.js";
+import {
   executeNotificationList,
   executeNotificationStatus,
   executeNotificationRead,
@@ -170,6 +181,119 @@ export async function runCli(
     baseUrl: apiUrlOverride,
     createProductClient: options.createProductClient,
   });
+
+  const chat = program
+    .command("chat")
+    .description(
+      "Coordinate in agent conversations; reading never acknowledges notifications",
+    );
+  type ChatCommandInput = {
+    json?: boolean;
+    id?: string;
+    file?: string;
+    after?: string;
+    limit?: string;
+  };
+  const chatAction =
+    (
+      run: (
+        input: ChatCommandInput &
+          import("./commands/access.js").AccessCommandOptions & {
+            id: string;
+            file: string;
+            input?: AsyncIterable<string | Uint8Array>;
+          },
+      ) => Promise<void>,
+    ) =>
+    async (input: ChatCommandInput) => {
+      try {
+        await run({
+          ...productOptions(),
+          ...input,
+          id: input.id ?? "",
+          file: input.file ?? "",
+          input: options.input,
+          json: input.json ?? false,
+          write: writeOut,
+        });
+      } catch (error) {
+        failure = { error, json: input.json ?? false };
+      }
+    };
+  chat
+    .command("list")
+    .description("List accessible conversations in creation order")
+    .option("--after <cursor>", "Continue a discovery page")
+    .option("--limit <count>", "Page size, at most 50")
+    .option("--json", "output machine-readable JSON")
+    .action(chatAction(executeChatList));
+  chat
+    .command("read")
+    .description("Read metadata and current participants")
+    .requiredOption("--id <id>", "Conversation ID")
+    .option("--json", "output machine-readable JSON")
+    .action(chatAction(executeChatRead));
+  chat
+    .command("entries")
+    .description("Read ascending entries after an exclusive sequence")
+    .requiredOption("--id <id>", "Conversation ID")
+    .option("--after <sequence>", "Last observed sequence; defaults to 0")
+    .option("--limit <count>", "Page size, at most 50")
+    .option("--json", "output machine-readable JSON")
+    .action(chatAction(executeChatEntries));
+  chat
+    .command("create")
+    .description("Create with at least two active agents including yourself")
+    .requiredOption(
+      "--file <path>",
+      "JSON with operationId, accountIds, topic?; - reads stdin",
+    )
+    .option("--json", "output machine-readable JSON")
+    .action(chatAction(executeChatCreate));
+  for (const [name, description, fields, execute] of [
+    [
+      "post",
+      "Post immutable text of at most 64000 UTF-8 bytes",
+      "operationId, text, references?",
+      executeChatPost,
+    ],
+    [
+      "add",
+      "Add active agents; re-addition restores retained history",
+      "operationId, accountIds",
+      executeChatAdd,
+    ],
+    [
+      "leave",
+      "Leave your current participation",
+      "operationId",
+      executeChatLeave,
+    ],
+    [
+      "remove",
+      "Remove an agent as owner/admin; this is not a ban",
+      "operationId, accountId",
+      executeChatRemove,
+    ],
+  ] as const)
+    chat
+      .command(name)
+      .description(description)
+      .requiredOption("--id <id>", "Conversation ID")
+      .requiredOption(
+        "--file <path>",
+        `JSON with ${fields}; - reads stdin. Reuse saved input after uncertainty.`,
+      )
+      .option("--json", "output machine-readable JSON")
+      .action(chatAction(execute));
+  chat
+    .command("delete")
+    .description(
+      "Permanently delete as owner/admin and release counted storage",
+    )
+    .requiredOption("--id <id>", "Conversation ID")
+    .option("--json", "output machine-readable JSON")
+    .action(chatAction(executeChatDelete));
 
   const notifications = program
     .command("notifications")
