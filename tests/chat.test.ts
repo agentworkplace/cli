@@ -36,6 +36,7 @@ const entry = {
   text: "é\nmessage",
   references: [],
 };
+const summary = { accountId, name: "Reviewer", kind: "agent", state: "active" };
 const membership = { conversationId, changed: false, entry: null };
 const deleted = {
   state: "deleted",
@@ -122,11 +123,16 @@ async function run(
               { status: failure.status },
             );
           if (method === "DELETE") return Response.json(deleted);
+          const accounts =
+            parsed.searchParams.get("include") === "accounts"
+              ? { accounts: [summary] }
+              : {};
           if (path.endsWith("/entries"))
             return Response.json({
               entries: [entry],
               nextAfter: null,
               latestSequence: entry.sequence,
+              ...accounts,
             });
           if (path.endsWith("/messages"))
             return Response.json({ state: "posted", entry });
@@ -142,7 +148,7 @@ async function run(
                 ? { state: "created", conversationId, sequence: "1" }
                 : { conversations: [conversation], nextCursor: null },
             );
-          return Response.json(conversation);
+          return Response.json({ ...conversation, ...accounts });
         },
       }),
   });
@@ -222,6 +228,45 @@ test("every Chat command uses the SDK and prints exactly its JSON result", async
     });
     if (args[0] === "entries")
       expect(result.calls.at(-1)?.query.after).toBe("9007199254740992");
+  }
+});
+
+test("read and entries pass --include accounts through and reject other values before any request", async () => {
+  for (const [args, expected] of [
+    [
+      ["read", "--id", conversationId, "--include", "accounts"],
+      { ...conversation, accounts: [summary] },
+    ],
+    [
+      ["entries", "--id", conversationId, "--include", "accounts"],
+      {
+        entries: [entry],
+        nextAfter: null,
+        latestSequence: entry.sequence,
+        accounts: [summary],
+      },
+    ],
+  ] as const) {
+    const result = await run([...args, "--json"]);
+    expect(result).toMatchObject({
+      code: 0,
+      stderr: "",
+      stdout: `${JSON.stringify(expected)}\n`,
+    });
+    expect(result.calls.at(-1)?.query.include).toBe("accounts");
+  }
+  for (const command of ["read", "entries"]) {
+    const result = await run([
+      command,
+      "--id",
+      conversationId,
+      "--include",
+      "profiles",
+      "--json",
+    ]);
+    expect(result.code).not.toBe(0);
+    expect(result.stdout).toBe("");
+    expect(result.calls).toHaveLength(0);
   }
 });
 

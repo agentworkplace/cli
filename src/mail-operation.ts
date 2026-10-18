@@ -5,8 +5,7 @@ import {
   type ComposeMailRequest,
   type SendMailRequest,
 } from "@agent-workplace/sdk";
-import { constants } from "node:fs";
-import { open } from "node:fs/promises";
+import { readBoundedFile } from "./bounded-file.js";
 import { accessOrigin } from "./credentials.js";
 import { CliConfigurationError } from "./errors.js";
 import { withPrivateJsonFile } from "./private-file.js";
@@ -69,40 +68,16 @@ export function withMailOperation<T>(
   );
 }
 
-/** Read a bounded regular file without following a final symlink; never print it. */
+/** Read bounded UTF-8 text without following a final symlink; never print it. */
 async function readBoundedMailText(
   path: string,
   maximumBytes: number,
 ): Promise<string> {
-  let file;
-  try {
-    file = await open(
-      path,
-      constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
-    );
-    const stat = await file.stat();
-    if (!stat.isFile() || stat.size > maximumBytes) throw invalid();
-    const buffer = Buffer.alloc(maximumBytes + 1);
-    let size = 0;
-    while (size < buffer.length) {
-      const { bytesRead } = await file.read(
-        buffer,
-        size,
-        buffer.length - size,
-        null,
-      );
-      if (!bytesRead) break;
-      size += bytesRead;
-    }
-    if (size > maximumBytes) throw invalid();
-    const text = new TextDecoder("utf-8", { fatal: true }).decode(
-      buffer.subarray(0, size),
-    );
-    if (text.includes("\0")) throw invalid();
-    return text;
-  } finally {
-    await file?.close();
-  }
+  const text = new TextDecoder("utf-8", { fatal: true }).decode(
+    await readBoundedFile(path, maximumBytes),
+  );
+  if (text.includes("\0")) throw invalid();
+  return text;
 }
 
 export async function readMailText(path: string): Promise<string> {

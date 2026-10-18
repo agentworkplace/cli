@@ -1,16 +1,6 @@
-import type { HealthResponse } from "@agent-workplace/sdk";
-
 import { presentError } from "./errors.js";
 
 export type WriteOutput = (value: string) => void;
-
-export function writeHealthResult(
-  result: HealthResponse,
-  json: boolean,
-  write: WriteOutput,
-): void {
-  write(json ? `${JSON.stringify(result)}\n` : `Status: ${result.status}\n`);
-}
 
 export function writeError(
   error: unknown,

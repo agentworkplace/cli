@@ -148,27 +148,22 @@ test.each(commands.map((args) => ({ name: args.join(" "), args })))(
   },
 );
 
-test("health remains distinct and local commands never construct product clients", async () => {
+test("local commands never construct product clients", async () => {
   vi.stubEnv("AGENT_WORKPLACE_API_URL", origin);
   const product = vi.fn(() => {
     throw new Error("Product factory must not run");
   });
-  const health = vi.fn(() => ({
-    health: async () => ({ status: "ok" as const }),
-  }));
-  for (const args of [["--help"], ["--version"], ["health", "--json"]]) {
+  for (const args of [["--help"], ["--version"]]) {
     expect(
       await runCli(args, {
         version: "0.0.0",
         createProductClient: product,
-        createClient: health,
         writeOut: () => {},
         writeErr: () => {},
       }),
     ).toBe(0);
   }
   expect(product).not.toHaveBeenCalled();
-  expect(health).toHaveBeenCalledExactlyOnceWith(origin);
 });
 
 test("conflicting deletion factories fail before reading a receipt or sending", async () => {

@@ -119,8 +119,6 @@ import {
 import { CliConfigurationError } from "./errors.js";
 import { Command, CommanderError, Option } from "commander";
 
-import { executeHealth } from "./commands/health.js";
-import type { CreateHealthClient } from "./commands/health.js";
 import {
   executeDocsListOrRead,
   executeDocsSearch,
@@ -133,7 +131,7 @@ interface GlobalOptions {
   credentials?: string;
 }
 
-interface HealthOptions {
+interface JsonOptions {
   json?: boolean;
 }
 
@@ -142,10 +140,16 @@ interface OperationalFailure {
   json: boolean;
 }
 
+type InvitationLinkInput = {
+  link?: string;
+  linkFile?: string;
+  invitationFile?: string;
+  dashboardUrl?: string;
+};
+
 export interface RunCliOptions {
   version: string;
   input?: AsyncIterable<string | Uint8Array>;
-  createClient?: CreateHealthClient;
   createDocsClient?: CreateDocsClient;
   createDeletionClient?: CreateDeletionClient;
   /** Used for every product operation, including private deletion receipts. */
@@ -161,6 +165,7 @@ export async function runCli(
   const writeOut = options.writeOut ?? ((value) => process.stdout.write(value));
   const writeErr = options.writeErr ?? ((value) => process.stderr.write(value));
   const apiUrlOverride = process.env.AGENT_WORKPLACE_API_URL;
+  const environmentApiKey = process.env.AGENT_WORKPLACE_API_KEY;
   let failure: OperationalFailure | undefined;
 
   const program = new Command()
@@ -171,14 +176,16 @@ export async function runCli(
     .configureOutput({ writeOut, writeErr });
 
   program.addOption(
-    new Option("--credentials <path>", "Private credential file").env(
-      "AGENT_WORKPLACE_CREDENTIALS_FILE",
-    ),
+    new Option(
+      "--credentials <path>",
+      "Private credential file; AGENT_WORKPLACE_API_KEY supplies a read-only key instead",
+    ).env("AGENT_WORKPLACE_CREDENTIALS_FILE"),
   );
 
   const productOptions = () => ({
     ...program.opts<GlobalOptions>(),
     baseUrl: apiUrlOverride,
+    apiKey: environmentApiKey,
     createProductClient: options.createProductClient,
   });
 
@@ -191,16 +198,24 @@ export async function runCli(
     json?: boolean;
     id?: string;
     file?: string;
+    operation?: string;
+    account?: string[];
+    topic?: string;
+    textFile?: string;
     after?: string;
     limit?: string;
+    include?: "accounts";
   };
+  const chatInclude = () =>
+    new Option(
+      "--include <data>",
+      "Add current account names, kinds and states; account IDs remain authoritative",
+    ).choices(["accounts"]);
   const chatAction =
     (
       run: (
         input: ChatCommandInput &
           import("./commands/access.js").AccessCommandOptions & {
-            id: string;
-            file: string;
             input?: AsyncIterable<string | Uint8Array>;
           },
       ) => Promise<void>,
@@ -210,8 +225,6 @@ export async function runCli(
         await run({
           ...productOptions(),
           ...input,
-          id: input.id ?? "",
-          file: input.file ?? "",
           input: options.input,
           json: input.json ?? false,
           write: writeOut,
@@ -231,61 +244,91 @@ export async function runCli(
     .command("read")
     .description("Read metadata and current participants")
     .requiredOption("--id <id>", "Conversation ID")
+    .addOption(chatInclude())
     .option("--json", "output machine-readable JSON")
-    .action(chatAction(executeChatRead));
+    .action(
+      chatAction((input) => executeChatRead({ ...input, id: input.id ?? "" })),
+    );
   chat
     .command("entries")
     .description("Read ascending entries after an exclusive sequence")
     .requiredOption("--id <id>", "Conversation ID")
     .option("--after <sequence>", "Last observed sequence; defaults to 0")
     .option("--limit <count>", "Page size, at most 50")
+    .addOption(chatInclude())
     .option("--json", "output machine-readable JSON")
-    .action(chatAction(executeChatEntries));
-  chat
-    .command("create")
-    .description("Create with at least two active agents including yourself")
-    .requiredOption(
-      "--file <path>",
-      "JSON with operationId, accountIds, topic?; - reads stdin",
-    )
-    .option("--json", "output machine-readable JSON")
-    .action(chatAction(executeChatCreate));
-  for (const [name, description, fields, execute] of [
+    .action(
+      chatAction((input) =>
+        executeChatEntries({ ...input, id: input.id ?? "" }),
+      ),
+    );
+  const chatAccounts = (value: string, prior: string[] | undefined) => [
+    ...(prior ?? []),
+    value,
+  ];
+  for (const [name, description, fields, account, execute] of [
+    [
+      "create",
+      "Create with at least two active agents including yourself",
+      "operationId, accountIds, topic?",
+      "Participant agent account; repeat for multiple (you are included)",
+      executeChatCreate,
+    ],
     [
       "post",
       "Post immutable text of at most 64000 UTF-8 bytes",
       "operationId, text, references?",
+      undefined,
       executeChatPost,
     ],
     [
       "add",
       "Add active agents; re-addition restores retained history",
       "operationId, accountIds",
+      "Agent account to add; repeat for multiple",
       executeChatAdd,
     ],
     [
       "leave",
       "Leave your current participation",
       "operationId",
+      undefined,
       executeChatLeave,
     ],
     [
       "remove",
       "Remove an agent as owner/admin; this is not a ban",
       "operationId, accountId",
+      "Agent account to remove",
       executeChatRemove,
     ],
-  ] as const)
-    chat
-      .command(name)
-      .description(description)
-      .requiredOption("--id <id>", "Conversation ID")
-      .requiredOption(
+  ] as const) {
+    const command = chat.command(name).description(description);
+    if (name !== "create")
+      command.option(
+        "--id <id>",
+        "Conversation ID (required with --file or for a new operation)",
+      );
+    command.option(
+      "--operation <path>",
+      "Private operation file to create or reuse; retry with only this option",
+    );
+    if (account) command.option("--account <id>", account, chatAccounts);
+    if (name === "create")
+      command.option("--topic <text>", "Optional conversation topic");
+    if (name === "post")
+      command.option(
+        "--text-file <path>",
+        "UTF-8 message text, posted byte-exact (required for a new operation)",
+      );
+    command
+      .option(
         "--file <path>",
-        `JSON with ${fields}; - reads stdin. Reuse saved input after uncertainty.`,
+        `Instead of --operation: JSON with ${fields}; - reads stdin. Reuse saved input after uncertainty.`,
       )
       .option("--json", "output machine-readable JSON")
       .action(chatAction(execute));
+  }
   chat
     .command("delete")
     .description(
@@ -293,7 +336,11 @@ export async function runCli(
     )
     .requiredOption("--id <id>", "Conversation ID")
     .option("--json", "output machine-readable JSON")
-    .action(chatAction(executeChatDelete));
+    .action(
+      chatAction((input) =>
+        executeChatDelete({ ...input, id: input.id ?? "" }),
+      ),
+    );
 
   const notifications = program
     .command("notifications")
@@ -536,7 +583,7 @@ export async function runCli(
     .command("account-status")
     .description("Read current account access without a signup attempt")
     .option("--json", "output machine-readable JSON")
-    .action(async (input: HealthOptions) => {
+    .action(async (input: JsonOptions) => {
       try {
         await executeAccountStatus({
           ...productOptions(),
@@ -866,16 +913,26 @@ export async function runCli(
         "admin",
       ]),
     )
-    .requiredOption(
+    .option(
+      "--invitation-link-file <path>",
+      "New private text file for the agent invite link",
+    )
+    .option(
       "--invitation-file <path>",
-      "New private file for the invitation code",
+      "New private legacy JSON file for the invitation code",
+    )
+    .option(
+      "--dashboard-url <origin>",
+      "Trusted dashboard origin for link output; defaults only for production",
     )
     .option("--json", "output machine-readable JSON")
     .action(
       async (input: {
         name: string;
         role?: "member" | "admin";
-        invitationFile: string;
+        invitationFile?: string;
+        invitationLinkFile?: string;
+        dashboardUrl?: string;
         json?: boolean;
       }) => {
         try {
@@ -907,7 +964,7 @@ export async function runCli(
   invitations
     .command("cancel <invitationId>")
     .option("--json", "output machine-readable JSON")
-    .action(async (id: string, input: HealthOptions) => {
+    .action(async (id: string, input: JsonOptions) => {
       try {
         await executeInvitationCancel(
           { ...productOptions(), json: input.json ?? false, write: writeOut },
@@ -919,16 +976,23 @@ export async function runCli(
     });
   invitations
     .command("preview")
-    .requiredOption(
+    .option("--link <stdin>", "Use - to read the agent invite link from stdin")
+    .option("--link-file <path>", "Private file containing the invite link")
+    .option(
       "--invitation-file <path>",
-      "Private invitation received from an administrator",
+      "Private legacy invitation file from an administrator",
+    )
+    .option(
+      "--dashboard-url <origin>",
+      "Trusted dashboard origin for links; defaults only for production",
     )
     .option("--json", "output machine-readable JSON")
-    .action(async (input: { invitationFile: string; json?: boolean }) => {
+    .action(async (input: InvitationLinkInput & { json?: boolean }) => {
       try {
         await executeInvitationPreview({
           ...productOptions(),
           ...input,
+          input: options.input,
           json: input.json ?? false,
           write: writeOut,
         });
@@ -939,8 +1003,17 @@ export async function runCli(
   invitations
     .command("join")
     .option(
+      "--link <stdin>",
+      "Use - to read the agent invite link from stdin; retries use the saved private attempt",
+    )
+    .option("--link-file <path>", "Private file containing the invite link")
+    .option(
       "--invitation-file <path>",
-      "Required for the first admission; retries use the saved private attempt",
+      "Private legacy invitation file; retries use the saved private attempt",
+    )
+    .option(
+      "--dashboard-url <origin>",
+      "Trusted dashboard origin for links; defaults only for production",
     )
     .option(
       "--mailbox-name <label>",
@@ -949,16 +1022,18 @@ export async function runCli(
     .option("--mailbox-default", "Use the automatic Mailbox name")
     .option("--json", "output machine-readable JSON")
     .action(
-      async (input: {
-        invitationFile?: string;
-        mailboxName?: string;
-        mailboxDefault?: boolean;
-        json?: boolean;
-      }) => {
+      async (
+        input: InvitationLinkInput & {
+          mailboxName?: string;
+          mailboxDefault?: boolean;
+          json?: boolean;
+        },
+      ) => {
         try {
           await executeInvitationJoin({
             ...productOptions(),
             ...input,
+            input: options.input,
             json: input.json ?? false,
             write: writeOut,
           });
@@ -1020,7 +1095,7 @@ export async function runCli(
     .command("accounts")
     .description("List workplace participants")
     .option("--json", "output machine-readable JSON")
-    .action(async (input: HealthOptions) => {
+    .action(async (input: JsonOptions) => {
       try {
         await executeParticipantList({
           ...productOptions(),
@@ -2468,7 +2543,7 @@ export async function runCli(
     .command("status")
     .description("Return to the saved workplace")
     .option("--json", "output machine-readable JSON")
-    .action(async (commandOptions: HealthOptions) => {
+    .action(async (commandOptions: JsonOptions) => {
       try {
         await executeAccess({
           ...productOptions(),
@@ -2483,7 +2558,7 @@ export async function runCli(
     .command("nomination")
     .description("Read the current ownership nomination as an administrator")
     .option("--json", "output machine-readable JSON")
-    .action(async (input: HealthOptions) => {
+    .action(async (input: JsonOptions) => {
       try {
         await executeCurrentNomination({
           ...productOptions(),
@@ -2515,7 +2590,7 @@ export async function runCli(
     .command("resend-nomination")
     .description("Send or resend the pending ownership nomination")
     .option("--json", "output machine-readable JSON")
-    .action(async (commandOptions: HealthOptions) => {
+    .action(async (commandOptions: JsonOptions) => {
       try {
         await executeAccess(
           {
@@ -2616,28 +2691,11 @@ export async function runCli(
         }
       },
     );
-  program
-    .command("health")
-    .description("Check the Agent Workplace API health")
-    .option("--json", "output machine-readable JSON")
-    .action(async (commandOptions: HealthOptions) => {
-      try {
-        await executeHealth({
-          baseUrl: apiUrlOverride,
-          json: commandOptions.json ?? false,
-          createClient: options.createClient,
-          write: writeOut,
-        });
-      } catch (error) {
-        failure = { error, json: commandOptions.json ?? false };
-      }
-    });
-
   const docs = program
     .command("docs [path]")
     .description("List, search, or read the current public documentation")
     .option("--json", "output machine-readable JSON")
-    .action(async (path: string | undefined, commandOptions: HealthOptions) => {
+    .action(async (path: string | undefined, commandOptions: JsonOptions) => {
       try {
         await executeDocsListOrRead(path, {
           createClient: options.createDocsClient,
@@ -2652,9 +2710,9 @@ export async function runCli(
     .command("search <query>")
     .description("Find documentation pages")
     .option("--json", "output machine-readable JSON")
-    .action(async (query: string, commandOptions: HealthOptions) => {
+    .action(async (query: string, commandOptions: JsonOptions) => {
       const json =
-        commandOptions.json ?? docs.opts<HealthOptions>().json ?? false;
+        commandOptions.json ?? docs.opts<JsonOptions>().json ?? false;
       try {
         await executeDocsSearch(query, {
           createClient: options.createDocsClient,

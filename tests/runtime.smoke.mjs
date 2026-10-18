@@ -2,6 +2,9 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createServer } from "node:http";
 import { once } from "node:events";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   AgentWorkplace,
@@ -41,23 +44,77 @@ assert.equal(
   identity,
 );
 
+// Account status proves the packed SDK and built CLI transport with a saved
+// private credential, as an installed agent uses them.
+const workplaceId = "22222222-2222-4222-8222-222222222222";
+const accountStatus = {
+  accountId: identity,
+  workplaceId,
+  kind: "agent",
+  role: "owner",
+  state: "active",
+  workplaceState: "confirmed",
+  cleanupAt: null,
+  cleanupWarning: null,
+  starter: null,
+  free: {
+    confirmedAt: "2026-09-17T00:00:00.000Z",
+    periodStart: "2026-09-17T00:00:00.000Z",
+    periodEnd: "2026-10-17T00:00:00.000Z",
+    outboundUsed: 0,
+    inboundUsed: 0,
+    storageUsedBytes: 0,
+    outboundLimit: 200,
+    inboundLimit: 1000,
+    storageLimit: "5 GB",
+  },
+};
 const server = createServer((request, response) => {
   response.setHeader("content-type", "application/json");
   response.setHeader("X-Request-ID", request.headers["x-request-id"]);
-  response.end(JSON.stringify({ status: "ok" }));
+  if (
+    request.url !== "/v1/access/account" ||
+    request.headers.authorization !== "Bearer fixture-key"
+  ) {
+    response.statusCode = 404;
+    response.end(
+      JSON.stringify({ error: { code: "not_found", message: "Not found" } }),
+    );
+    return;
+  }
+  response.end(JSON.stringify(accountStatus));
 });
 server.listen(0, "127.0.0.1");
 await once(server, "listening");
+const directory = await mkdtemp(join(tmpdir(), "awp-runtime-"));
 try {
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  const credentials = join(directory, "credentials.json");
+  await writeFile(
+    credentials,
+    JSON.stringify({
+      version: 1,
+      kind: "account",
+      origin: baseUrl,
+      credential: { accountId: identity, workplaceId, key: "fixture-key" },
+    }),
+    { mode: 0o600 },
+  );
   const client = new AgentWorkplace({ baseUrl });
-  assert.deepEqual(await client.health(), { status: "ok" });
-  const child = spawn(process.execPath, [cliEntry, "health", "--json"], {
-    stdio: ["ignore", "pipe", "pipe"],
-    env: { ...process.env, AGENT_WORKPLACE_API_URL: baseUrl },
-    timeout: 10_000,
-    killSignal: "SIGKILL",
-  });
+  assert.deepEqual(
+    await client.accountStatus({ apiKey: "fixture-key" }),
+    accountStatus,
+  );
+  const child = spawn(
+    process.execPath,
+    [cliEntry, "--credentials", credentials, "account-status", "--json"],
+    {
+      stdio: ["ignore", "pipe", "pipe"],
+      env: { ...process.env, AGENT_WORKPLACE_API_URL: baseUrl },
+      timeout: 10_000,
+      killSignal: "SIGKILL",
+    },
+  );
   let stdout = "";
   let stderr = "";
   child.stdout.on("data", (chunk) => {
@@ -69,11 +126,12 @@ try {
   const [code] = await once(child, "close");
   assert.equal(code, 0);
   assert.equal(stderr, "");
-  assert.deepEqual(JSON.parse(stdout), { status: "ok" });
+  assert.deepEqual(JSON.parse(stdout), accountStatus);
   console.log(`SDK and built CLI transport passed on ${process.version}`);
 } finally {
   server.closeAllConnections();
   await new Promise((resolve) => server.close(resolve));
+  await rm(directory, { recursive: true, force: true });
 }
 
 // Keep stdin open: the retired command must explain the human flow immediately.

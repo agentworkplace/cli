@@ -155,6 +155,32 @@ function validateState(value: unknown): CredentialState {
   return state;
 }
 
+export interface CredentialSourceOptions {
+  /** `--credentials` or `AGENT_WORKPLACE_CREDENTIALS_FILE`. */
+  credentials?: string | undefined;
+  /** `AGENT_WORKPLACE_API_KEY`; read-only and never written to disk. */
+  apiKey?: string | undefined;
+}
+
+/** Returns the environment key when it is the selected source. It replaces only
+ * the implicit default file; an explicit file and a key together are ambiguous. */
+export function environmentApiKey(options: CredentialSourceOptions) {
+  if (!options.apiKey) return;
+  if (options.credentials !== undefined)
+    throw new CliConfigurationError(
+      "Choose either AGENT_WORKPLACE_API_KEY or a credential file, not both",
+    );
+  return options.apiKey;
+}
+
+/** Commands that persist credential state require a private credential file. */
+export function requireCredentialFile(options: CredentialSourceOptions) {
+  if (options.apiKey)
+    throw new CliConfigurationError(
+      "This command saves credential state; unset AGENT_WORKPLACE_API_KEY and use a credential file",
+    );
+}
+
 export function credentialFilePath(configuredPath: string | undefined) {
   return resolve(
     configuredPath ??
