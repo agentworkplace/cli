@@ -3,6 +3,7 @@ import { productClient } from "../client.js";
 import {
   accessOrigin,
   completedCredentialState,
+  requireCredentialFile,
   withCredentials,
   credentialFilePath,
   type CredentialState,
@@ -15,6 +16,7 @@ import { executeSavedOperation, type AccessCommandOptions } from "./access.js";
 export async function executeKeyRotation(
   options: AccessCommandOptions & { name: string },
 ) {
+  requireCredentialFile(options);
   await withCredentials(options.credentials, async (store) => {
     let state = await store.read();
     if (!state?.credential)
@@ -131,6 +133,7 @@ export async function executeKeyIssue(
   },
   recovery: boolean,
 ) {
+  requireCredentialFile(options);
   await withCredentials(options.credentials, async (source) => {
     const saved = await source.read();
     if (!saved?.credential)

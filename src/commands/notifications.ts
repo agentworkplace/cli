@@ -8,8 +8,12 @@ import {
   type NotificationEndpointRegisterRequest,
 } from "@agent-workplace/sdk";
 import { executeSavedOperation, type AccessCommandOptions } from "./access.js";
-import { accessOrigin, withCredentials } from "../credentials.js";
-import { productClient } from "../client.js";
+import {
+  accessOrigin,
+  environmentApiKey,
+  withCredentials,
+} from "../credentials.js";
+import { productClient, productionApiOrigin } from "../client.js";
 import { CliConfigurationError } from "../errors.js";
 
 async function endpointRegistrationInput(
@@ -246,9 +250,20 @@ export async function pollNotifications(options: {
   }
 }
 
-export async function executeNotificationWait(
-  options: AccessCommandOptions & { after?: string; watch: boolean },
-) {
+async function notificationWaitCredential(options: AccessCommandOptions) {
+  const apiKey = environmentApiKey(options);
+  if (apiKey !== undefined) {
+    // An environment key has no saved identity; account status binds it once.
+    const client = productClient(
+      options,
+      accessOrigin(options.baseUrl ?? productionApiOrigin),
+    );
+    const status = await client.accountStatus({ apiKey });
+    return {
+      client,
+      credential: { accountId: status.accountId, key: apiKey },
+    };
+  }
   // Read and release the credential-file lock before a potentially unbounded wait.
   const state = await withCredentials(options.credentials, (store) =>
     store.read(),
@@ -264,8 +279,16 @@ export async function executeNotificationWait(
     throw new CliConfigurationError(
       "Saved credentials belong to another API origin",
     );
-  const credential = state.credential;
-  const client = productClient(options, state.origin);
+  return {
+    client: productClient(options, state.origin),
+    credential: state.credential,
+  };
+}
+
+export async function executeNotificationWait(
+  options: AccessCommandOptions & { after?: string; watch: boolean },
+) {
+  const { client, credential } = await notificationWaitCredential(options);
   const controller = new AbortController();
   const interrupt = () => controller.abort(new NotificationWaitCanceled(130));
   const terminate = () => controller.abort(new NotificationWaitCanceled(143));
@@ -296,7 +319,7 @@ export async function executeNotificationWait(
             );
           } catch {
             throw new CliConfigurationError(
-              "Saved credential account does not match the notification response",
+              "Credential account does not match the notification response",
             );
           }
           return status;

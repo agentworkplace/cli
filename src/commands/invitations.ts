@@ -5,21 +5,29 @@ import {
   parseHumanInvitationFile,
   createHumanInvitationLink,
   parseHumanInvitationLink,
+  createAgentInvitationLink,
+  parseAgentInvitationLink,
   type InvitationAdmission,
   type MailboxAddressChoice,
 } from "@agent-workplace/sdk";
 import {
   accessOrigin,
   credentialFilePath,
+  requireCredentialFile,
   withCredentials,
 } from "../credentials.js";
-import { productClient } from "../client.js";
+import {
+  productClient,
+  productionApiOrigin,
+  productionDashboardOrigin,
+} from "../client.js";
 import { CliConfigurationError } from "../errors.js";
 import {
   completedInvitationAttempt,
   withInvitation,
   withInvitationAttempt,
   type InvitationAttempt,
+  type SavedInvitation,
 } from "../invitation-file.js";
 import { executeSavedOperation, type AccessCommandOptions } from "./access.js";
 import { withPrivateJsonFile, withPrivateTextFile } from "../private-file.js";
@@ -57,43 +65,199 @@ function sameIdentity(
     a.workplaceId === b.workplaceId
   );
 }
+const maximumLinkBytes = 8192;
+/** The production dashboard is implied only by the production API. */
+function dashboardOriginFor(apiOrigin: string, dashboardUrl?: string) {
+  if (dashboardUrl === undefined) {
+    if (apiOrigin === productionApiOrigin) return productionDashboardOrigin;
+    throw new CliConfigurationError(
+      "Specify --dashboard-url for invitation links outside production",
+    );
+  }
+  try {
+    return accessOrigin(dashboardUrl);
+  } catch {
+    throw new CliConfigurationError(
+      "Specify a canonical HTTPS dashboard origin, or HTTP on loopback",
+    );
+  }
+}
+const linkText = {
+  label: "Invitation link",
+  maximumBytes: maximumLinkBytes,
+  validate(value: unknown) {
+    if (typeof value !== "string") throw new Error("Invalid link");
+    return value;
+  },
+};
+async function readStandardInput(input?: AsyncIterable<string | Uint8Array>) {
+  if (!input && process.stdin.isTTY)
+    throw new CliConfigurationError(
+      "Pipe the invitation link on standard input",
+    );
+  const chunks: Uint8Array[] = [];
+  let length = 0;
+  for await (const chunk of input ?? process.stdin) {
+    const next = typeof chunk === "string" ? Buffer.from(chunk) : chunk;
+    length += next.byteLength;
+    if (length > maximumLinkBytes)
+      throw new CliConfigurationError("Invalid agent invitation link");
+    chunks.push(next);
+  }
+  return Buffer.concat(chunks).toString("utf8");
+}
+type InvitationInput = {
+  invitationFile?: string;
+  link?: string;
+  linkFile?: string;
+  dashboardUrl?: string;
+  input?: AsyncIterable<string | Uint8Array>;
+};
+/** Links never choose the destination: both origins come from configuration. */
+async function suppliedInvitation(
+  options: AccessCommandOptions & InvitationInput,
+): Promise<SavedInvitation | undefined> {
+  const sources = [
+    options.invitationFile,
+    options.link,
+    options.linkFile,
+  ].filter((value) => value !== undefined);
+  if (sources.length > 1)
+    throw new CliConfigurationError(
+      "Choose only one of --link, --link-file or --invitation-file",
+    );
+  if (options.link === undefined && options.linkFile === undefined) {
+    if (options.dashboardUrl !== undefined)
+      throw new CliConfigurationError(
+        "--dashboard-url is used only with --link or --link-file",
+      );
+    if (options.invitationFile === undefined) return undefined;
+    const saved = await withInvitation(options.invitationFile, (store) =>
+      store.read(),
+    );
+    if (!saved)
+      throw new CliConfigurationError("Invitation file does not exist");
+    return saved;
+  }
+  // Never echo this value: anything passed here may be a bearer link.
+  if (options.link !== undefined && options.link !== "-")
+    throw new CliConfigurationError(
+      "Pass the invitation link on standard input with --link -, or use --link-file",
+    );
+  const apiOrigin = accessOrigin(options.baseUrl ?? productionApiOrigin);
+  const dashboardOrigin = dashboardOriginFor(apiOrigin, options.dashboardUrl);
+  let value: string | undefined;
+  if (options.linkFile !== undefined) {
+    value = await withPrivateTextFile(options.linkFile, linkText, (store) =>
+      store.read(),
+    );
+    if (value === undefined)
+      throw new CliConfigurationError("Invitation link file does not exist");
+  } else value = await readStandardInput(options.input);
+  try {
+    return parseAgentInvitationLink(value.trim(), {
+      dashboardOrigin,
+      apiOrigin,
+    });
+  } catch {
+    throw new CliConfigurationError(
+      "Invalid agent invitation link for this API and dashboard",
+    );
+  }
+}
 export async function executeInvitationCreate(
   options: AccessCommandOptions & {
-    invitationFile: string;
+    invitationFile?: string;
+    invitationLinkFile?: string;
+    dashboardUrl?: string;
     name: string;
     role?: "admin" | "member";
   },
 ) {
-  separatePaths(options, options.invitationFile);
-  await executeSavedOperation(options, async (client, key, _status, origin) =>
-    withInvitation(options.invitationFile, async (store) => {
-      if (await store.read())
-        throw new CliConfigurationError(
-          "Invitation file already exists; choose a new path",
-        );
-      const issued = await client.createAgentInvitation(
+  const path = options.invitationLinkFile ?? options.invitationFile;
+  if (!path || (options.invitationFile && options.invitationLinkFile))
+    throw new CliConfigurationError(
+      "Specify exactly one of --invitation-link-file or --invitation-file",
+    );
+  if (options.dashboardUrl !== undefined && !options.invitationLinkFile)
+    throw new CliConfigurationError(
+      "--dashboard-url is used only with --invitation-link-file",
+    );
+  separatePaths(options, path);
+  await executeSavedOperation(options, async (client, key, _status, origin) => {
+    const linkOptions = {
+      dashboardOrigin: options.invitationLinkFile
+        ? dashboardOriginFor(origin, options.dashboardUrl)
+        : "",
+      apiOrigin: origin,
+    };
+    let issued = false;
+    const create = async () => {
+      const value = await client.createAgentInvitation(
         { apiKey: key },
         { name: options.name, role: options.role },
       );
-      await store.write({
-        version: 1,
-        kind: "invitation",
-        origin,
-        invitationId: issued.id,
-        workplaceId: issued.workplaceId,
-        accountId: issued.accountId,
-        code: issued.code,
+      issued = true;
+      return value;
+    };
+    const record = (value: Awaited<ReturnType<typeof create>>) => ({
+      version: 1 as const,
+      kind: "invitation" as const,
+      origin,
+      invitationId: value.id,
+      workplaceId: value.workplaceId,
+      accountId: value.accountId,
+      code: value.code,
+    });
+    const metadata = (value: Awaited<ReturnType<typeof create>>) => ({
+      invitationId: value.id,
+      accountId: value.accountId,
+      workplaceId: value.workplaceId,
+      role: value.role,
+      expiresAt: value.expiresAt,
+    });
+    try {
+      if (options.invitationLinkFile)
+        return await withPrivateTextFile(
+          path,
+          {
+            ...linkText,
+            createOnly: true,
+            validate(value) {
+              if (typeof value !== "string") throw new Error("Invalid link");
+              parseAgentInvitationLink(value, linkOptions);
+              return value;
+            },
+          },
+          async (store) => {
+            if ((await store.read()) !== undefined)
+              throw new CliConfigurationError(
+                "Invitation file already exists; choose a new path",
+              );
+            const value = await create();
+            await store.write(
+              createAgentInvitationLink(record(value), linkOptions),
+            );
+            return { ...metadata(value), invitationLinkFile: resolve(path) };
+          },
+        );
+      return await withInvitation(path, async (store) => {
+        if (await store.read())
+          throw new CliConfigurationError(
+            "Invitation file already exists; choose a new path",
+          );
+        const value = await create();
+        await store.write(record(value));
+        return { ...metadata(value), invitationFile: resolve(path) };
       });
-      return {
-        invitationId: issued.id,
-        accountId: issued.accountId,
-        workplaceId: issued.workplaceId,
-        role: issued.role,
-        expiresAt: issued.expiresAt,
-        invitationFile: resolve(options.invitationFile),
-      };
-    }),
-  );
+    } catch (error) {
+      if (issued)
+        throw new CliConfigurationError(
+          "Invitation creation may already have succeeded, but saving the private file failed. Use invitations list to inspect the invitation; cancel it before issuing a replacement if needed.",
+        );
+      throw error;
+    }
+  });
 }
 export async function executeHumanInvitationCreate(
   options: AccessCommandOptions & {
@@ -235,13 +399,14 @@ export async function executeInvitationCancel(
   );
 }
 export async function executeInvitationPreview(
-  options: AccessCommandOptions & { invitationFile: string },
+  options: AccessCommandOptions & InvitationInput,
 ) {
-  separatePaths(options, options.invitationFile);
-  const saved = await withInvitation(options.invitationFile, (store) =>
-    store.read(),
-  );
-  if (!saved) throw new CliConfigurationError("Invitation file does not exist");
+  separatePaths(options, options.invitationFile ?? options.linkFile);
+  const saved = await suppliedInvitation(options);
+  if (!saved)
+    throw new CliConfigurationError(
+      "Specify --link -, --link-file or --invitation-file",
+    );
   if (
     options.baseUrl !== undefined &&
     accessOrigin(options.baseUrl) !== saved.origin
@@ -257,13 +422,17 @@ export async function executeInvitationPreview(
 }
 
 export async function executeInvitationJoin(
-  options: AccessCommandOptions & {
-    invitationFile?: string;
-    mailboxName?: string;
-    mailboxDefault?: boolean;
-  },
+  options: AccessCommandOptions &
+    InvitationInput & {
+      mailboxName?: string;
+      mailboxDefault?: boolean;
+    },
 ) {
-  const paths = separatePaths(options, options.invitationFile);
+  requireCredentialFile(options);
+  const paths = separatePaths(
+    options,
+    options.invitationFile ?? options.linkFile,
+  );
   if (options.mailboxName !== undefined && options.mailboxDefault)
     throw new CliConfigurationError("Choose only one mailbox address option");
   const selected: MailboxAddressChoice | undefined =
@@ -279,11 +448,7 @@ export async function executeInvitationJoin(
     throw new CliConfigurationError(
       "Mailbox name must contain 3 to 48 characters",
     );
-  const supplied = options.invitationFile
-    ? await withInvitation(options.invitationFile, (store) => store.read())
-    : undefined;
-  if (options.invitationFile && !supplied)
-    throw new CliConfigurationError("Invitation file does not exist");
+  const supplied = await suppliedInvitation(options);
   await withCredentials(paths.credentials, async (credentials) => {
     await withInvitationAttempt(paths.attempt, async (store) => {
       let account = await credentials.read();
@@ -295,7 +460,7 @@ export async function executeInvitationJoin(
           );
         if (!supplied)
           throw new CliConfigurationError(
-            "Specify --invitation-file for the first admission",
+            "Specify --link -, --link-file or --invitation-file for the first admission",
           );
         attempt = {
           ...supplied,

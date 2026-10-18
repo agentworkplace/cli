@@ -13,15 +13,18 @@ import {
 } from "@agent-workplace/sdk";
 import {
   accessOrigin,
+  environmentApiKey,
+  requireCredentialFile,
   withCredentials,
+  type CredentialSourceOptions,
   type CredentialState,
 } from "../credentials.js";
 import { CliConfigurationError } from "../errors.js";
 import type { WriteOutput } from "../output.js";
 
-export interface AccessCommandOptions extends ProductClientOptions {
+export interface AccessCommandOptions
+  extends ProductClientOptions, CredentialSourceOptions {
   baseUrl?: string | undefined;
-  credentials?: string | undefined;
   json: boolean;
   write: WriteOutput;
 }
@@ -71,6 +74,7 @@ export async function executeSignup(
     mailboxDefault?: boolean;
   },
 ) {
+  requireCredentialFile(options);
   await withCredentials(options.credentials, async (store) => {
     let state = await store.read();
     if (state?.version === 1)
@@ -233,6 +237,19 @@ export async function executeSavedOperation(
     origin: string,
   ) => Promise<object>,
 ) {
+  const apiKey = environmentApiKey(options);
+  if (apiKey !== undefined) {
+    // Without a saved identity, account status is the identity.
+    const origin = accessOrigin(options.baseUrl ?? productionApiOrigin);
+    const client = productClient(options, origin);
+    const status = await client.accountStatus({ apiKey });
+    output(
+      await operation(client, apiKey, status, origin),
+      options.json,
+      options.write,
+    );
+    return;
+  }
   await withCredentials(options.credentials, async (store) => {
     const state = await store.read();
     if (!state?.credential)
