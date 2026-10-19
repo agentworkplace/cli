@@ -125,6 +125,29 @@ export async function executeKeyEdit(
   );
 }
 
+/** MCP agent grants are listed and revoked with the agent's key; a grant
+ * cannot manage grants. */
+export async function executeGrantList(
+  options: AccessCommandOptions,
+  accountId?: string,
+) {
+  await executeSavedOperation(options, (client, apiKey, status) =>
+    client.listAgentGrants({ apiKey }, accountId ?? status.accountId),
+  );
+}
+export async function executeGrantRevoke(
+  options: AccessCommandOptions,
+  input: { accountId?: string; grantId: string },
+) {
+  await executeSavedOperation(options, (client, apiKey, status) =>
+    client.revokeAgentGrant(
+      { apiKey },
+      input.accountId ?? status.accountId,
+      input.grantId,
+    ),
+  );
+}
+
 export async function executeKeyIssue(
   options: AccessCommandOptions & {
     accountId?: string;

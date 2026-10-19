@@ -1,5 +1,18 @@
 # agent-workplace
 
+## 0.8.0
+
+### Minor Changes
+
+- Add `grants` and `revoke-grant --grant-id <id>` to list and revoke the MCP agent
+  grants that act as an agent. Both default to the saved agent, accept
+  `--account-id <id>` for an eligible target, and use the saved key.
+
+### Patch Changes
+
+- Updated dependencies
+  - @agent-workplace/sdk@0.9.0
+
 ## 0.7.0
 
 ### Minor Changes
