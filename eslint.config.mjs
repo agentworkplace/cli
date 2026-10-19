@@ -5,8 +5,8 @@ import tseslint from "typescript-eslint";
 
 export default [
   js.configs.recommended,
-  eslintConfigPrettier,
   ...tseslint.configs.recommended,
   { languageOptions: { globals: globals.node } },
   { ignores: ["dist/**", "node_modules/**"] },
+  eslintConfigPrettier,
 ];

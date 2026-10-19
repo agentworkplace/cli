@@ -106,6 +106,8 @@ import {
   executeParticipantList,
   executeParticipantRemoval,
   executeKeyList,
+  executeGrantList,
+  executeGrantRevoke,
   executeKeyEdit,
 } from "./commands/keys.js";
 import {
@@ -1151,6 +1153,51 @@ export async function runCli(
         failure = { error, json: input.json ?? false };
       }
     });
+  program
+    .command("grants")
+    .description("List an agent's active MCP agent grants")
+    .option("--account-id <id>", "Target agent UUID; defaults to this account")
+    .option("--json", "output machine-readable JSON")
+    .action(async (input: { accountId?: string; json?: boolean }) => {
+      try {
+        await executeGrantList(
+          {
+            ...productOptions(),
+            json: input.json ?? false,
+            write: writeOut,
+          },
+          input.accountId,
+        );
+      } catch (error) {
+        failure = { error, json: input.json ?? false };
+      }
+    });
+  program
+    .command("revoke-grant")
+    .description("Revoke an MCP agent grant and its refresh tokens")
+    .requiredOption("--grant-id <id>", "Grant UUID from grants")
+    .option("--account-id <id>", "Target agent UUID; defaults to this account")
+    .option("--json", "output machine-readable JSON")
+    .action(
+      async (input: {
+        accountId?: string;
+        grantId: string;
+        json?: boolean;
+      }) => {
+        try {
+          await executeGrantRevoke(
+            {
+              ...productOptions(),
+              json: input.json ?? false,
+              write: writeOut,
+            },
+            input,
+          );
+        } catch (error) {
+          failure = { error, json: input.json ?? false };
+        }
+      },
+    );
   for (const action of ["rename-key", "revoke-key"] as const) {
     const command = program
       .command(action)

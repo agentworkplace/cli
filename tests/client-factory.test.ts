@@ -61,6 +61,8 @@ const commands = [
   ["keys"],
   ["rename-key", "--key-id", id, "--name", "New name"],
   ["revoke-key", "--key-id", id],
+  ["grants"],
+  ["revoke-grant", "--grant-id", id],
   ["rotate-key", "--name", "Rotation"],
   ["create-key", "--name", "Key", "--save-to", "unused.json"],
   ["recover-keys", "--name", "Recovery", "--save-to", "unused.json"],
