@@ -205,10 +205,39 @@ export async function executeAccess(
   options: AccessCommandOptions,
   resend = false,
 ) {
-  await executeSavedOperation(options, async (client, key) =>
-    resend ? client.resendNomination(key) : client.accessStatus(key),
-  );
+  await executeSavedOperation(options, async (client, key) => {
+    try {
+      return await (resend
+        ? client.resendNomination(key)
+        : client.accessStatus(key));
+    } catch (error) {
+      // Invited accounts have no creator signup, and only the nominating agent
+      // has a nomination to send; keep the API code and status.
+      const message =
+        error instanceof AgentWorkplaceError && error.code
+          ? accountStatusRedirects.get(error.code)
+          : undefined;
+      if (!message || !(error instanceof AgentWorkplaceError)) throw error;
+      throw new AgentWorkplaceError(
+        `${message}; use agent-workplace account-status`,
+        {
+          status: error.status,
+          code: error.code,
+          requestId: error.requestId,
+          cause: error,
+        },
+      );
+    }
+  });
 }
+
+const accountStatusRedirects = new Map([
+  ["creator_status_unavailable", "This account has no creator signup status"],
+  [
+    "no_pending_nomination",
+    "This account has no pending ownership nomination to send",
+  ],
+]);
 
 export async function executeAccountStatus(options: AccessCommandOptions) {
   await executeSavedOperation(options, async (_client, _key, status) => status);
