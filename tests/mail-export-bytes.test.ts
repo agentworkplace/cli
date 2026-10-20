@@ -13,6 +13,9 @@ import { tmpdir } from "node:os";
 import { afterEach, expect, test, vi } from "vitest";
 import { exportMailBytes } from "../src/mail-export-bytes.js";
 
+// Each publication issues several durable fsyncs; a CI disk stall can take
+// seconds, so allow far more than the default 5s without hiding a real hang.
+vi.setConfig({ testTimeout: 30_000 });
 const directories: string[] = [];
 afterEach(async () => {
   await Promise.all(

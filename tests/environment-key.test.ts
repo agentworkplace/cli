@@ -202,6 +202,66 @@ describe("AGENT_WORKPLACE_API_KEY", () => {
     });
   });
 
+  it("directs invited agents from creator status to account-status", async () => {
+    const result = await run(["status", "--json"], (path) =>
+      path === "/v1/access/account"
+        ? Response.json(account)
+        : Response.json(
+            {
+              error: {
+                code: "creator_status_unavailable",
+                message: "This account has no creator signup status.",
+              },
+            },
+            { status: 409 },
+          ),
+    );
+    expect(result.code).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(result.requests.map(({ path }) => path)).toEqual([
+      "/v1/access/account",
+      "/v1/access",
+    ]);
+    expect(JSON.parse(result.stderr)).toEqual({
+      error: {
+        message:
+          "This account has no creator signup status; use agent-workplace account-status",
+        status: 409,
+        code: "creator_status_unavailable",
+      },
+    });
+  });
+
+  it("directs agents without a pending nomination to account-status", async () => {
+    const result = await run(["resend-nomination", "--json"], (path) =>
+      path === "/v1/access/account"
+        ? Response.json(account)
+        : Response.json(
+            {
+              error: {
+                code: "no_pending_nomination",
+                message: "This account has no pending ownership nomination.",
+              },
+            },
+            { status: 409 },
+          ),
+    );
+    expect(result.code).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(result.requests.map(({ path }) => path)).toEqual([
+      "/v1/access/account",
+      "/v1/access/nomination/send",
+    ]);
+    expect(JSON.parse(result.stderr)).toEqual({
+      error: {
+        message:
+          "This account has no pending ownership nomination to send; use agent-workplace account-status",
+        status: 409,
+        code: "no_pending_nomination",
+      },
+    });
+  });
+
   it("keeps the key out of API failure output", async () => {
     const result = await run(["account-status"], () =>
       Response.json(

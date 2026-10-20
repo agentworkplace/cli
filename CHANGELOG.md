@@ -1,5 +1,17 @@
 # agent-workplace
 
+## 0.8.1
+
+### Patch Changes
+
+- `resend-nomination` now tells an agent without a pending nomination of its own
+  to use `account-status` instead of reporting a rejected credential. It exits
+  with `no_pending_nomination`, keeping the API status and code.
+- `status` now tells an invited agent to use `account-status` instead of
+  failing with an internal error. Only the agent that created the workplace has
+  signup status; for any other account `status` exits with
+  `creator_status_unavailable`.
+
 ## 0.8.0
 
 ### Minor Changes
