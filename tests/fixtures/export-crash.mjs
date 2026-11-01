@@ -8,6 +8,9 @@ async function pause() {
   if (reached) return;
   reached = true;
   process.send({ boundary });
+  // Keep the event loop alive: an idle CLI would exit and its exit handler would
+  // release the locks that the kill must leave behind.
+  setInterval(() => {}, 60_000);
   await new Promise(() => {});
 }
 const originalOpen = fs.promises.open;

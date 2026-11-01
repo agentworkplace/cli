@@ -3,6 +3,7 @@ import {
   parseFilesOrganizationRequest,
   parseRestoreFileRevisionRequest,
   parseFileTrashRequest,
+  parseFileCopyRequest,
   parseFileDeletionRequest,
   type BeginFileUploadRequest,
   type FileUploadSource,
@@ -227,6 +228,22 @@ export function withFilesOrganizationOperation<T>(
     path,
     "Files organization operation",
     parseFilesOrganizationRequest,
+    operation,
+  );
+}
+export function withFilesCopyOperation<T>(
+  path: string,
+  operation: Parameters<
+    typeof withFilesMutationOperation<
+      ReturnType<typeof parseFileCopyRequest>,
+      T
+    >
+  >[3],
+) {
+  return withFilesMutationOperation(
+    path,
+    "Files copy operation",
+    parseFileCopyRequest,
     operation,
   );
 }

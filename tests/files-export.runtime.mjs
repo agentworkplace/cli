@@ -9,6 +9,7 @@ import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { ageAbandonedLocks } from "./stale-locks.mjs";
 export async function testExportCrashRecovery(
   cliEntry = fileURLToPath(new URL("../dist/index.js", import.meta.url)),
 ) {
@@ -98,6 +99,10 @@ export async function testExportCrashRecovery(
             actorId: accountId,
             changedAt: file.createdAt,
             reference: file.reference,
+            revisionId: file.revisionId,
+            contentType: file.contentType,
+            byteLength: file.byteLength,
+            sha256: file.sha256,
           },
         ],
         nextCursor: null,
@@ -211,7 +216,8 @@ export async function testExportCrashRecovery(
         assert.equal(listings, 1);
         ranges = [];
       }
-      // Let the production lock expire naturally. No test-only lock removal.
+      // Download recovery waits out the production stale threshold once.
+      await ageAbandonedLocks(directory);
       const resumed = await start(false).closed;
       assert.equal(resumed.code, 0, resumed.stderr);
       assert.equal(resumed.stderr, "");

@@ -206,6 +206,10 @@ test("saves organization requests before dispatch and binds the original target"
           actorId: f.accountId,
           changedAt: new Date().toISOString(),
           reference: `awp:folder:${f.workplaceId}:${entryId}`,
+          revisionId: null,
+          contentType: null,
+          byteLength: null,
+          sha256: null,
         },
       };
     });
@@ -234,6 +238,70 @@ test("saves organization requests before dispatch and binds the original target"
     ).code,
   ).not.toBe(0);
   expect(organize).toHaveBeenCalledTimes(2);
+});
+
+test("saves copy requests before dispatch, finalizes, and retries identically", async () => {
+  const f = await fixture(),
+    operation = join(f.dir, "copy.json"),
+    fileId = randomUUID(),
+    revisionId = randomUUID(),
+    uploadId = randomUUID();
+  const begin = vi
+    .spyOn(AgentWorkplace.prototype, "beginFileCopy")
+    .mockImplementation(async (_auth, request) => {
+      expect(JSON.parse(await readFile(operation, "utf8")).request).toEqual(
+        request,
+      );
+      return {
+        state: "pending" as const,
+        uploadId,
+        fileId: randomUUID(),
+        revisionId: null,
+        version: null,
+      };
+    });
+  const finalize = vi
+    .spyOn(AgentWorkplace.prototype, "finalizeFileUpload")
+    .mockResolvedValue({
+      state: "pending",
+      uploadId,
+      fileId: randomUUID(),
+      revisionId: null,
+      version: null,
+    });
+  const args = [
+    "copy",
+    fileId,
+    "--revision",
+    revisionId,
+    "--name",
+    "copy.md",
+    "--operation",
+    operation,
+  ];
+  expect((await f.run(args)).code).toBe(0);
+  expect((await f.run(args)).code).toBe(0);
+  expect(begin.mock.calls[0]![1]).toEqual(begin.mock.calls[1]![1]);
+  expect(begin.mock.calls[0]![1]).toMatchObject({
+    fileId,
+    revisionId,
+    target: { name: "copy.md" },
+  });
+  expect(finalize).toHaveBeenCalledTimes(2);
+  expect((await stat(operation)).mode & 0o777).toBe(0o600);
+  expect(
+    (
+      await f.run([
+        "copy",
+        fileId,
+        "--name",
+        "other.md",
+        "--operation",
+        operation,
+      ])
+    ).code,
+  ).not.toBe(0);
+  expect(begin).toHaveBeenCalledTimes(2);
 });
 
 test("persists and reuses a private restoration receipt and rejects changed input", async () => {

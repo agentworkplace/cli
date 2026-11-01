@@ -16,6 +16,7 @@ import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { ageAbandonedLocks } from "./stale-locks.mjs";
 export async function testDownloadCrashRecovery() {
   const directory = await realpath(
     await mkdtemp(join(tmpdir(), "awp-download-crash-")),
@@ -189,7 +190,10 @@ export async function testDownloadCrashRecovery() {
         boundary === "unlink-before-directory"
       )
         assert.equal(saved.state, "complete");
-      // Let the production lock expire naturally. No test-only lock removal.
+      // The first boundary waits out the production stale threshold; later
+      // ones backdate the abandoned lock so the stale rule reclaims it at once.
+      if (boundary !== "bytes-before-checkpoint")
+        await ageAbandonedLocks(directory);
       const resumed = await start(false).closed;
       assert.equal(resumed.code, 0, resumed.stderr);
       assert.equal(resumed.stderr, "");
