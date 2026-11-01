@@ -56,6 +56,10 @@ async function fixture(large = false) {
     actorId: context.accountId,
     changedAt: "2026-09-17T00:00:00.000Z",
     reference: `awp:${kind}:${context.workplaceId}:${id(n)}`,
+    revisionId: null,
+    contentType: null,
+    byteLength: null,
+    sha256: null,
   });
   const file = (n: number, revision = 100 + n): FileMetadata => ({
     workplaceId: context.workplaceId,

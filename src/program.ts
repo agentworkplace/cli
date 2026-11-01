@@ -39,6 +39,9 @@ import {
   executeFilesRestore,
   executeFilesRestorationStatus,
   executeFilesTree,
+  executeFilesCopy,
+  executeFilesSearch,
+  executeFilesActivity,
   executeFilesCheckpoint,
   executeFilesChanges,
   executeFilesBaseline,
@@ -1324,9 +1327,15 @@ export async function runCli(
     .description("List recoverable trashed files")
     .option("--after <cursor>", "Continue listing")
     .option("--limit <count>", "Page size, 1–100")
+    .option("--query <text>", "Only names containing this text")
     .option("--json", "output machine-readable JSON")
     .action(
-      async (options: { after?: string; limit?: string; json?: boolean }) => {
+      async (options: {
+        after?: string;
+        limit?: string;
+        query?: string;
+        json?: boolean;
+      }) => {
         try {
           await executeFilesTrashList({
             ...productOptions(),
@@ -1649,13 +1658,24 @@ export async function runCli(
     .command("tree")
     .description("List files and folders within a parent")
     .option("--parent <id>", "Folder UUID or root")
-    .option("--after <cursor>", "Continue listing")
+    .option("--after <cursor>", "Continue the default listing")
+    .addOption(
+      new Option("--order <order>", "Order by name or change time").choices([
+        "name",
+        "changed",
+      ]),
+    )
+    .option("--desc", "Descending order (with --order)")
+    .option("--cursor <cursor>", "Continue an ordered listing")
     .option("--limit <count>", "Page size, 1–100")
     .option("--json", "output machine-readable JSON")
     .action(
       async (options: {
         parent?: string;
         after?: string;
+        order?: "name" | "changed";
+        desc?: boolean;
+        cursor?: string;
         limit?: string;
         json?: boolean;
       }) => {
@@ -1663,8 +1683,131 @@ export async function runCli(
           await executeFilesTree({
             ...productOptions(),
             ...options,
+            order:
+              options.order === "changed"
+                ? "changedAt"
+                : (options.order as "name" | undefined),
             limit:
               options.limit === undefined ? undefined : Number(options.limit),
+            json: options.json ?? false,
+            write: writeOut,
+          });
+        } catch (error) {
+          failure = { error, json: options.json ?? false };
+        }
+      },
+    );
+  files
+    .command("search [query]")
+    .description(
+      "Find live files and folders by name, or list recent changes with --order changed",
+    )
+    .addOption(
+      new Option("--kind <kind>", "Only files or folders").choices([
+        "file",
+        "folder",
+      ]),
+    )
+    .addOption(
+      new Option("--order <order>", "Order by name or change time").choices([
+        "name",
+        "changed",
+      ]),
+    )
+    .option("--asc", "Ascending order")
+    .option("--desc", "Descending order")
+    .option("--changed-since <time>", "Only entries changed since an ISO time")
+    .option("--cursor <cursor>", "Continue listing")
+    .option("--limit <count>", "Page size, 1–50")
+    .option("--json", "output machine-readable JSON")
+    .action(
+      async (
+        query: string | undefined,
+        options: {
+          kind?: "file" | "folder";
+          order?: "name" | "changed";
+          asc?: boolean;
+          desc?: boolean;
+          changedSince?: string;
+          cursor?: string;
+          limit?: string;
+          json?: boolean;
+        },
+      ) => {
+        try {
+          await executeFilesSearch({
+            ...productOptions(),
+            ...options,
+            query,
+            order:
+              options.order === "changed"
+                ? "changedAt"
+                : (options.order as "name" | undefined),
+            limit:
+              options.limit === undefined ? undefined : Number(options.limit),
+            json: options.json ?? false,
+            write: writeOut,
+          });
+        } catch (error) {
+          failure = { error, json: options.json ?? false };
+        }
+      },
+    );
+  files
+    .command("activity <entry>")
+    .description("List an entry's retained changes, newest first")
+    .option("--before <position>", "Continue listing")
+    .option("--limit <count>", "Page size, 1–100")
+    .option("--json", "output machine-readable JSON")
+    .action(
+      async (
+        entry: string,
+        options: { before?: string; limit?: string; json?: boolean },
+      ) => {
+        try {
+          await executeFilesActivity({
+            ...productOptions(),
+            ...options,
+            entry,
+            limit:
+              options.limit === undefined ? undefined : Number(options.limit),
+            json: options.json ?? false,
+            write: writeOut,
+          });
+        } catch (error) {
+          failure = { error, json: options.json ?? false };
+        }
+      },
+    );
+  files
+    .command("copy <file>")
+    .description(
+      "Copy a file's current or given revision into a new file on the server",
+    )
+    .requiredOption("--name <name>", "Name of the copy")
+    .option("--parent <id>", "Destination folder UUID or root")
+    .option("--revision <id>", "Revision to copy; defaults to the current one")
+    .requiredOption(
+      "--operation <file>",
+      "Private operation record to save before sending and reuse to retry",
+    )
+    .option("--json", "output machine-readable JSON")
+    .action(
+      async (
+        file: string,
+        options: {
+          name: string;
+          parent?: string;
+          revision?: string;
+          operation: string;
+          json?: boolean;
+        },
+      ) => {
+        try {
+          await executeFilesCopy({
+            ...productOptions(),
+            ...options,
+            file,
             json: options.json ?? false,
             write: writeOut,
           });

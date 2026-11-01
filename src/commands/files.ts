@@ -7,6 +7,7 @@ import {
   parseFilesOrganizationRequest,
   parseRestoreFileRevisionRequest,
   parseFileTrashRequest,
+  parseFileCopyRequest,
   parseFileDeletionRequest,
 } from "@agent-workplace/sdk";
 import { executeSavedOperation, type AccessCommandOptions } from "./access.js";
@@ -15,6 +16,7 @@ import {
   withFilesOrganizationOperation,
   withFilesRestorationOperation,
   withFilesTrashOperation,
+  withFilesCopyOperation,
   withFilesDeletionOperation,
   withFileUploadSource,
 } from "../files-operation.js";
@@ -186,9 +188,18 @@ export async function executeFilesTree(
   options: AccessCommandOptions & {
     parent?: string;
     after?: string;
+    order?: "name" | "changedAt";
+    desc?: boolean;
+    cursor?: string;
     limit?: number;
   },
 ) {
+  if ((options.desc || options.cursor) && !options.order)
+    throw new CliConfigurationError("Use --order with --desc or --cursor");
+  if (options.after && options.order)
+    throw new CliConfigurationError(
+      "Use --cursor, not --after, to continue an ordered listing",
+    );
   await executeSavedOperation(options, (client, key, status) =>
     client.listFilesTree(
       { apiKey: key },
@@ -196,6 +207,58 @@ export async function executeFilesTree(
         workplaceId: status.workplaceId,
         parentId: options.parent === "root" ? null : options.parent,
         after: options.after,
+        order: options.order,
+        direction: options.order ? (options.desc ? "desc" : "asc") : undefined,
+        cursor: options.cursor,
+        limit: options.limit,
+      },
+    ),
+  );
+}
+export async function executeFilesSearch(
+  options: AccessCommandOptions & {
+    query?: string;
+    kind?: "file" | "folder";
+    order?: "name" | "changedAt";
+    desc?: boolean;
+    asc?: boolean;
+    changedSince?: string;
+    cursor?: string;
+    limit?: number;
+  },
+) {
+  if (options.desc && options.asc)
+    throw new CliConfigurationError("Use either --asc or --desc");
+  await executeSavedOperation(options, (client, key, status) =>
+    client.searchFiles(
+      { apiKey: key },
+      {
+        workplaceId: status.workplaceId,
+        query: options.query,
+        kind: options.kind,
+        order: options.order,
+        direction: options.desc ? "desc" : options.asc ? "asc" : undefined,
+        changedSince: options.changedSince,
+        cursor: options.cursor,
+        limit: options.limit,
+      },
+    ),
+  );
+}
+export async function executeFilesActivity(
+  options: AccessCommandOptions & {
+    entry: string;
+    before?: string;
+    limit?: number;
+  },
+) {
+  await executeSavedOperation(options, (client, key, status) =>
+    client.listFilesActivity(
+      { apiKey: key },
+      {
+        workplaceId: status.workplaceId,
+        entryId: options.entry,
+        before: options.before,
         limit: options.limit,
       },
     ),
@@ -264,6 +327,72 @@ export async function executeFilesOrganize(
   );
 }
 
+export async function executeFilesCopy(
+  options: AccessCommandOptions & {
+    operation: string;
+    file: string;
+    revision?: string;
+    name: string;
+    parent?: string;
+  },
+) {
+  await executeSavedOperation(options, (client, key, status, origin) =>
+    withFilesCopyOperation(options.operation, async (store) => {
+      const saved = await store.read();
+      if (
+        saved &&
+        (saved.origin !== origin ||
+          saved.accountId !== status.accountId ||
+          saved.request.workplaceId !== status.workplaceId)
+      )
+        throw new CliConfigurationError(
+          "Files operation belongs to another server, workplace or account",
+        );
+      const revisionId =
+        options.revision ??
+        saved?.request.revisionId ??
+        (
+          await client.getFile(
+            { apiKey: key },
+            { workplaceId: status.workplaceId, fileId: options.file },
+          )
+        ).revisionId;
+      const request = parseFileCopyRequest({
+        workplaceId: status.workplaceId,
+        operationId: saved?.request.operationId ?? randomUUID(),
+        fileId: options.file,
+        revisionId,
+        target: {
+          name: options.name,
+          ...(options.parent === undefined
+            ? {}
+            : { parentId: options.parent === "root" ? null : options.parent }),
+        },
+        expiresAt:
+          saved?.request.expiresAt ??
+          new Date(Date.now() + 55 * 60_000).toISOString(),
+      });
+      if (saved && JSON.stringify(saved.request) !== JSON.stringify(request))
+        throw new CliConfigurationError(
+          "Files operation is immutable; retry its original inputs",
+        );
+      if (!saved)
+        await store.write({
+          version: 1,
+          origin,
+          accountId: status.accountId,
+          request,
+        });
+      const begun = await client.beginFileCopy({ apiKey: key }, request);
+      return begun.state === "pending"
+        ? client.finalizeFileUpload(
+            { apiKey: key },
+            { workplaceId: request.workplaceId, uploadId: begun.uploadId },
+          )
+        : begun;
+    }),
+  );
+}
 export async function executeFilesHistory(
   options: AccessCommandOptions & {
     file: string;
@@ -349,7 +478,11 @@ export async function executeFilesRestorationStatus(
 }
 
 export async function executeFilesTrashList(
-  options: AccessCommandOptions & { after?: string; limit?: number },
+  options: AccessCommandOptions & {
+    after?: string;
+    limit?: number;
+    query?: string;
+  },
 ) {
   await executeSavedOperation(options, (client, key, status) =>
     client.listTrashedFiles(
@@ -358,6 +491,7 @@ export async function executeFilesTrashList(
         workplaceId: status.workplaceId,
         after: options.after,
         limit: options.limit,
+        query: options.query,
       },
     ),
   );

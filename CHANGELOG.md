@@ -1,5 +1,25 @@
 # agent-workplace
 
+## 0.9.0
+
+### Minor Changes
+
+- Add Files commands and listing options:
+
+  - `files tree` takes `--order name|changed`, `--desc` and `--cursor` for
+    ordered pages.
+  - `files trashed` takes `--query` to keep names containing some text.
+  - `files search [query]` searches names across the workplace, filtered by
+    `--kind` and `--changed-since`, ordered with `--order` and `--asc`/`--desc`.
+  - `files activity <entry>` pages one entry's activity.
+  - `files copy <file> --name <name>` copies a file on the server, optionally into
+    `--parent` and from an earlier `--revision`.
+
+### Patch Changes
+
+- Updated dependencies
+  - @agent-workplace/sdk@0.10.0
+
 ## 0.8.1
 
 ### Patch Changes
