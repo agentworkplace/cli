@@ -210,6 +210,7 @@ export async function runCli(
     after?: string;
     limit?: string;
     include?: "accounts";
+    order?: "created" | "activity";
   };
   const chatInclude = () =>
     new Option(
@@ -240,11 +241,33 @@ export async function runCli(
     };
   chat
     .command("list")
-    .description("List accessible conversations in creation order")
-    .option("--after <cursor>", "Continue a discovery page")
+    .description(
+      "List accessible conversations, in creation order unless --order activity",
+    )
+    .option("--after <cursor>", "Continue a page of the same order")
     .option("--limit <count>", "Page size, at most 50")
+    .addOption(
+      new Option(
+        "--order <order>",
+        "created (complete discovery) or activity (most recent message first)",
+      ).choices(["created", "activity"]),
+    )
+    .addOption(
+      new Option(
+        "--include <data>",
+        "Comma-separated additions: accounts (current names, kinds and states) and latest_entry (latest message preview or creation entry)",
+      ),
+    )
     .option("--json", "output machine-readable JSON")
-    .action(chatAction(executeChatList));
+    .action(
+      chatAction(({ include, ...input }) =>
+        // List takes a comma-separated set, validated by the SDK.
+        executeChatList({
+          ...input,
+          listInclude: include as string | undefined,
+        }),
+      ),
+    );
   chat
     .command("read")
     .description("Read metadata and current participants")

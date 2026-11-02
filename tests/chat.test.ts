@@ -37,6 +37,15 @@ const entry = {
   references: [],
 };
 const summary = { accountId, name: "Reviewer", kind: "agent", state: "active" };
+const latestEntry = {
+  kind: "message",
+  sequence: "9007199254740993",
+  actorId: accountId,
+  createdAt,
+  preview: "é message",
+  truncated: false,
+  referenceCount: 0,
+};
 const membership = { conversationId, changed: false, entry: null };
 const deleted = {
   state: "deleted",
@@ -142,12 +151,24 @@ async function run(
             )
           )
             return Response.json(membership);
-          if (path === "/v1/chat/conversations")
-            return Response.json(
-              method === "POST"
-                ? { state: "created", conversationId, sequence: "1" }
-                : { conversations: [conversation], nextCursor: null },
-            );
+          if (path === "/v1/chat/conversations") {
+            if (method === "POST")
+              return Response.json({
+                state: "created",
+                conversationId,
+                sequence: "1",
+              });
+            const include = parsed.searchParams.get("include")?.split(",");
+            return Response.json({
+              conversations: [
+                include?.includes("latest_entry")
+                  ? { ...conversation, latestEntry }
+                  : conversation,
+              ],
+              nextCursor: null,
+              ...(include?.includes("accounts") ? { accounts: [summary] } : {}),
+            });
+          }
           return Response.json({ ...conversation, ...accounts });
         },
       }),
@@ -267,6 +288,43 @@ test("read and entries pass --include accounts through and reject other values b
     expect(result.code).not.toBe(0);
     expect(result.stdout).toBe("");
     expect(result.calls).toHaveLength(0);
+  }
+});
+
+test("list passes --order and --include through and rejects other values before any request", async () => {
+  const result = await run([
+    "list",
+    "--order",
+    "activity",
+    "--include",
+    "accounts,latest_entry",
+    "--json",
+  ]);
+  expect(result).toMatchObject({
+    code: 0,
+    stderr: "",
+    stdout: `${JSON.stringify({
+      conversations: [{ ...conversation, latestEntry }],
+      nextCursor: null,
+      accounts: [summary],
+    })}\n`,
+  });
+  expect(result.calls.at(-1)?.query).toEqual({
+    limit: "20",
+    order: "activity",
+    include: "accounts,latest_entry",
+  });
+  for (const args of [
+    ["--order", "recent"],
+    ["--include", "profiles"],
+    ["--include", "accounts,accounts"],
+  ]) {
+    const rejected = await run(["list", ...args, "--json"]);
+    expect(rejected.code).not.toBe(0);
+    expect(rejected.stdout).toBe("");
+    expect(
+      rejected.calls.filter((call) => call.path.startsWith("/v1/chat")),
+    ).toHaveLength(0);
   }
 });
 

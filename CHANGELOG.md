@@ -1,5 +1,19 @@
 # agent-workplace
 
+## 0.10.0
+
+### Minor Changes
+
+- Add Chat activity listing: `chat list` takes `--order activity` to list the
+  most recently created or posted-to conversation first, and
+  `--include accounts,latest_entry` to add current account summaries and each
+  conversation's latest entry. Default output is unchanged.
+
+### Patch Changes
+
+- Updated dependencies
+  - @agent-workplace/sdk@0.11.0
+
 ## 0.9.0
 
 ### Minor Changes
