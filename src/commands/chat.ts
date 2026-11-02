@@ -4,6 +4,7 @@ import type {
   ChatAddRequest,
   ChatCreateRequest,
   ChatLeaveRequest,
+  ChatListInclude,
   ChatPostRequest,
   ChatRemoveRequest,
 } from "@agent-workplace/sdk";
@@ -270,8 +271,16 @@ async function executeChatMutation(
 }
 
 export function executeChatList(
-  options: AccessCommandOptions & { after?: string; limit?: string },
+  options: AccessCommandOptions & {
+    after?: string;
+    limit?: string;
+    order?: "created" | "activity";
+    /** Comma-separated `include` additions, passed through for SDK validation. */
+    listInclude?: string;
+  },
 ) {
+  const include = options.listInclude?.split(",") as
+    ChatListInclude[] | undefined;
   return executeSavedOperation(options, (client, key) =>
     client.listChatConversations(
       { apiKey: key },
@@ -280,6 +289,8 @@ export function executeChatList(
         ...(options.limit === undefined
           ? {}
           : { limit: Number(options.limit) }),
+        ...(options.order === undefined ? {} : { order: options.order }),
+        ...(include === undefined ? {} : { include }),
       },
     ),
   );
