@@ -149,7 +149,9 @@ test("signup shows the permanent assigned mailbox on fresh and recovered human o
   expect(human).not.toContain("bootstrapProof");
   expect(human).toContain("Cleanup deadline: 2026-10-25T00:00:00.000Z");
   expect(human).toContain("Nomination delivery: accepted");
-  expect(human).toContain("Next: Read the nomination ID from status");
+  expect(human).toContain(
+    "Next: The nominated owner confirms from the emailed link",
+  );
   expect(human).not.toContain("private-owner@example.test");
   write.mockClear();
   await executeSignup(options);

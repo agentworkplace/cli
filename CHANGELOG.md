@@ -1,5 +1,65 @@
 # agent-workplace
 
+## 0.10.2
+
+### Patch Changes
+
+- Show what a failure needs for follow-up, and keep `--json` failures in one format:
+
+  - API failures include the `requestId`, and `retryAfterSeconds` and the `scopes` an
+    `insufficient_scope` failure needs when the API returns them. JSON errors carry them
+    as fields; default output adds `Required scopes:`, `Retry after` and `Request ID:`
+    lines.
+  - With `--json`, usage errors such as a missing or invalid option are now one JSON
+    line on stderr with `code: "usage"`, instead of Commander's plain text. Exit codes
+    are unchanged. Scripts that matched the plain-text usage message with `--json` must
+    read the JSON `message` instead.
+
+- Complete and correct help text:
+
+  - Every command now has a description, including the `show`/`update`, `invitations`,
+    `notifications`, `files folders` and `mail address`/`mailboxes` commands that had
+    none. `block-sender` and `unblock-sender`, and `reply`, `reply-all` and `forward`, no
+    longer share descriptions.
+  - Help marks mandatory options `(required)`.
+  - `status` says it is for a workplace created by `signup`, `--credentials` no longer
+    calls the environment key read-only, and Mail and Files `restore` commands say
+    which kind of restore they do.
+  - Signup's next step after an accepted nomination no longer mentions the retired
+    `confirm-ownership` flow.
+  - A private file or directory with shared permissions now names its path and the
+    `chmod` that fixes it.
+
+- Name the input at fault instead of failing with a server validation error or a
+  generic message:
+
+  - `--limit` values and UUID options and arguments are checked before any request,
+    as usage errors that name the option or argument.
+  - Input the SDK rejects, such as a malformed `files get` reference, reports its
+    message with `code: invalid_input` instead of `Unable to complete the request`.
+  - An invalid `--to`, `--cc` or `--bcc` address, an overlong `--mailbox-name` and
+    other rejected inputs no longer report a valid private file as invalid, and save
+    nothing.
+  - `files organize` without `--name` or `--parent`, and `files folders create` with an
+    empty name, fail locally.
+  - `feedback send` suggests `--submission-id` only after a submission was sent, and
+    reports an unreadable message file.
+  - `owner-email-handoff` names an invalid `--dashboard-url`.
+
+- `mail export` no longer leaves a hidden `.awp-mail-content-…` hard link beside each
+  exported file. Each candidate is removed once its item is complete, and a retry
+  verifies completed files against their saved identity, length and digest, so
+  copying or pruning an export no longer duplicates bytes or blocks its retry.
+  Completed files that were removed, replaced or changed still fail instead of being
+  recreated.
+- Let commands that share a credential file run in parallel. Commands now read the
+  credential file and release its lock before calling the API, so a long upload,
+  download or export no longer makes other commands fail with `Credential storage is
+busy`. Commands that save credential state still wait for each other. A lost lock
+  no longer replaces the result of a command that already completed.
+- Updated dependencies
+  - @agent-workplace/sdk@0.13.0
+
 ## 0.10.1
 
 ### Patch Changes

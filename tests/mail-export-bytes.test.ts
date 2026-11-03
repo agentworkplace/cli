@@ -7,6 +7,8 @@ import {
   stat,
   unlink,
   symlink,
+  link,
+  lstat,
 } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -81,6 +83,9 @@ test("Lost publication receipt recovers the exact published inode without reacqu
   const f = await fixture();
   await exportMailBytes(f.input);
   const receipt = await f.receipt();
+  // Recreate the state of a crash just before the completion receipt: the
+  // published output and its candidate link share one verified inode.
+  await link(f.input.output, receipt.candidate);
   await writeFile(
     f.input.operation,
     JSON.stringify({ ...receipt, state: "verified" }),
@@ -123,7 +128,7 @@ test("Recovery refuses changed content, a substituted destination and a candidat
   const h = await fixture();
   await exportMailBytes(h.input);
   const r = await h.receipt();
-  await unlink(r.candidate);
+  await expect(lstat(r.candidate)).rejects.toMatchObject({ code: "ENOENT" });
   await symlink(h.input.output, r.candidate);
   await expect(exportMailBytes(h.input)).rejects.toBeDefined();
 });
@@ -138,4 +143,31 @@ test("Recovery binds source context and expected digest and fails if completed o
   ).rejects.toThrow("changed");
   await unlink(f.input.output);
   await expect(exportMailBytes(f.input)).rejects.toThrow("changed");
+});
+
+test("A completed export leaves no candidate link, and retries verify the output", async () => {
+  const f = await fixture();
+  await exportMailBytes(f.input);
+  const receipt = await f.receipt();
+  expect(receipt.state).toBe("complete");
+  await expect(lstat(receipt.candidate)).rejects.toMatchObject({
+    code: "ENOENT",
+  });
+  expect((await lstat(f.input.output)).nlink).toBe(1);
+  f.input.load.mockRejectedValue(new Error("No source"));
+  await expect(exportMailBytes(f.input)).resolves.toMatchObject({
+    bytes: f.bytes.length,
+  });
+  expect(f.input.load).toHaveBeenCalledTimes(1);
+});
+test("A crash after the completion receipt removes the candidate on retry", async () => {
+  const f = await fixture();
+  await exportMailBytes(f.input);
+  const receipt = await f.receipt();
+  await link(f.input.output, receipt.candidate);
+  await exportMailBytes(f.input);
+  await expect(lstat(receipt.candidate)).rejects.toMatchObject({
+    code: "ENOENT",
+  });
+  expect((await lstat(f.input.output)).nlink).toBe(1);
 });

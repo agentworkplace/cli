@@ -1,4 +1,8 @@
-import { AgentWorkplaceError, DocumentationError } from "@agent-workplace/sdk";
+import {
+  AgentWorkplaceError,
+  AgentWorkplaceInputError,
+  DocumentationError,
+} from "@agent-workplace/sdk";
 
 export class CliConfigurationError extends Error {
   constructor(message: string, options?: ErrorOptions) {
@@ -21,6 +25,9 @@ export interface PresentedError {
   message: string;
   status?: number;
   code?: string;
+  requestId?: string;
+  retryAfterSeconds?: number;
+  scopes?: string[];
   submissionId?: string;
 }
 
@@ -35,12 +42,23 @@ export function presentError(error: unknown): PresentedError {
   }
 
   if (error instanceof AgentWorkplaceError) {
+    // Request IDs, retry timing and missing scope names are safe to show and
+    // let users follow up (for example with feedback send --request-id).
     return {
       message: error.message,
       status: error.status,
       ...(error.code === undefined ? {} : { code: error.code }),
+      ...(error.requestId === undefined ? {} : { requestId: error.requestId }),
+      ...(error.retryAfterSeconds === undefined
+        ? {}
+        : { retryAfterSeconds: error.retryAfterSeconds }),
+      ...(error.scopes === undefined ? {} : { scopes: error.scopes }),
     };
   }
+
+  // The SDK's input errors carry fixed messages that name the rejected input.
+  if (error instanceof AgentWorkplaceInputError)
+    return { message: error.message, code: error.code };
 
   if (error instanceof DocumentationError) {
     return {

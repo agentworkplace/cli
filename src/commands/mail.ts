@@ -1,6 +1,7 @@
 import { saveMailAttachment } from "../mail-download.js";
 import { randomUUID } from "node:crypto";
 import {
+  checkMailRecipients,
   withMailOperation,
   readMailText,
   readMailAttachmentSelection,
@@ -101,6 +102,7 @@ export async function executeMailSend(
           throw new CliConfigurationError(
             "A new Mail operation requires --to, --subject and --body-file",
           );
+        checkMailRecipients(options);
         const mailboxId = options.mailbox ?? status.mailbox?.mailboxId;
         if (!mailboxId)
           throw new CliConfigurationError(
@@ -199,6 +201,7 @@ export async function executeMailCompose(
           throw new CliConfigurationError(
             "A new Mail composition requires --message, --subject and --body-file",
           );
+        checkMailRecipients(options);
         const mailboxId = options.mailbox ?? status.mailbox?.mailboxId;
         if (!mailboxId)
           throw new CliConfigurationError(

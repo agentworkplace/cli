@@ -5,15 +5,23 @@ import { dirname, resolve } from "node:path";
 import lockfile from "proper-lockfile";
 import { CliConfigurationError } from "./errors.js";
 
-function checkPermissions(stat: Stats, directory: boolean, label: string) {
+function checkPermissions(
+  stat: Stats,
+  directory: boolean,
+  label: string,
+  path: string,
+) {
+  const kind = directory ? "directory" : "file";
   if (
     stat.isSymbolicLink() ||
-    (directory ? !stat.isDirectory() : !stat.isFile()) ||
-    (stat.mode & 0o077) !== 0 ||
-    stat.uid !== process.getuid?.()
+    (directory ? !stat.isDirectory() : !stat.isFile())
   )
     throw new CliConfigurationError(
-      `${label} files and directories must be owned by you and accessible only to you`,
+      `${label} files and directories must be owned by you and accessible only to you; ${path} is not a regular ${kind}`,
+    );
+  if ((stat.mode & 0o077) !== 0 || stat.uid !== process.getuid?.())
+    throw new CliConfigurationError(
+      `${label} files and directories must be owned by you and accessible only to you; make ${path} yours and run chmod ${directory ? "700" : "600"} on it`,
     );
 }
 
@@ -78,7 +86,7 @@ async function withPrivateFile<Value, Result>(
   const path = resolve(configuredPath);
   const directory = dirname(path);
   await mkdir(directory, { recursive: true, mode: 0o700 });
-  checkPermissions(await lstat(directory), true, options.label);
+  checkPermissions(await lstat(directory), true, options.label, directory);
   let compromised = false;
   let release: () => Promise<void>;
   try {
@@ -118,7 +126,7 @@ async function withPrivateFile<Value, Result>(
           throw new CliConfigurationError(`Unable to open ${name} file safely`);
         }
         try {
-          checkPermissions(await handle.stat(), false, options.label);
+          checkPermissions(await handle.stat(), false, options.label, path);
           if ((await handle.stat()).size > options.maximumBytes)
             throw new CliConfigurationError(`Invalid ${name} file`);
           return options.validate(
@@ -133,13 +141,23 @@ async function withPrivateFile<Value, Result>(
       },
       async write(value) {
         checkLock();
-        options.validate(value);
+        // Values being saved come from this command's inputs, so a rejection
+        // here is an input problem, not a damaged file.
+        const rejected = () =>
+          new CliConfigurationError(
+            `The command's options don't form a valid ${name}; check them and retry`,
+          );
+        try {
+          options.validate(value);
+        } catch {
+          throw rejected();
+        }
         const serialized = options.encode(value);
         if (Buffer.byteLength(serialized, "utf8") > options.maximumBytes)
-          throw new CliConfigurationError(`Invalid ${name} file`);
+          throw rejected();
         // Reject an existing unsafe destination rather than silently replacing it.
         try {
-          checkPermissions(await lstat(path), false, options.label);
+          checkPermissions(await lstat(path), false, options.label, path);
         } catch (error) {
           if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
         }
@@ -174,6 +192,8 @@ async function withPrivateFile<Value, Result>(
       },
     });
   } finally {
-    await release();
+    // A compromised lock makes release() reject; never let that replace the
+    // operation's own outcome, which may already have been printed.
+    await release().catch(() => {});
   }
 }

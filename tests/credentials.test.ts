@@ -317,7 +317,7 @@ describe("credential persistence", () => {
       withCredentials(file, (store) =>
         store.write({ ...state, acknowledged: true }),
       ),
-    ).rejects.toThrow("Invalid credential file");
+    ).rejects.toThrow("don't form a valid credential");
     expect(JSON.parse(await readFile(file, "utf8"))).toEqual(state);
   });
   it("does not send signup until the private proof is persisted", async () => {
@@ -552,7 +552,7 @@ describe("credential persistence", () => {
         withCredentials(file, (store) =>
           store.write(invalid as CredentialState),
         ),
-      ).rejects.toThrow("Invalid credential file");
+      ).rejects.toThrow("don't form a valid credential");
     }
   });
   it.each([
