@@ -363,7 +363,7 @@ test("malformed, oversized and invalid UTF-8 input fails privately before any ne
     expect(JSON.parse(result.stderr)).toEqual({
       error: {
         message:
-          "Provide UTF-8 JSON of at most 400000 bytes with an explicit operationId; use --file - for stdin",
+          "Provide UTF-8 JSON of at most 400000 bytes with an explicit operationId; use --request-file - for stdin",
       },
     });
     expect(result.calls).toEqual([]);

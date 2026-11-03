@@ -6,7 +6,7 @@ import {
   type SendMailRequest,
 } from "@agent-workplace/sdk";
 import { randomUUID } from "node:crypto";
-import { readBoundedFile } from "./bounded-file.js";
+import { readBoundedFile, readBoundedInput } from "./bounded-file.js";
 import { accessOrigin } from "./credentials.js";
 import { CliConfigurationError } from "./errors.js";
 import { withPrivateJsonFile } from "./private-file.js";
@@ -113,12 +113,19 @@ async function readBoundedMailText(
   return text;
 }
 
-export async function readMailText(path: string): Promise<string> {
+export async function readMailText(
+  path: string,
+  input?: AsyncIterable<string | Uint8Array>,
+): Promise<string> {
   try {
-    return await readBoundedMailText(path, 262144);
+    const text = new TextDecoder("utf-8", { fatal: true }).decode(
+      await readBoundedInput(path, 262144, input),
+    );
+    if (text.includes("\0")) throw invalid();
+    return text;
   } catch {
     throw new CliConfigurationError(
-      "Mail body must be a readable UTF-8 plain-text file of at most 256 KiB",
+      "Mail body must be readable UTF-8 plain text of at most 256 KiB; use --body-file - for stdin",
     );
   }
 }

@@ -47,7 +47,7 @@ async function chatInput(
     return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
   } catch {
     throw new CliConfigurationError(
-      "Provide UTF-8 JSON of at most 400000 bytes with an explicit operationId; use --file - for stdin",
+      "Provide UTF-8 JSON of at most 400000 bytes with an explicit operationId; use --request-file - for stdin",
     );
   }
 }
@@ -181,14 +181,14 @@ async function executeChatMutation(
   if (options.operation === undefined) {
     if (options.file === undefined)
       throw new CliConfigurationError(
-        "Provide --operation for a CLI-managed operation file, or --file JSON with an explicit operationId",
+        "Provide --operation for a CLI-managed operation file, or --request-file JSON with an explicit operationId",
       );
     if (operationInput)
       throw new CliConfigurationError(
         "--account, --topic and --text-file require --operation",
       );
     if (action !== "create" && options.id === undefined)
-      throw new CliConfigurationError("Provide --id with --file");
+      throw new CliConfigurationError("Provide --id with --request-file");
     const request = await chatInput(options.file, options.input);
     return executeSavedOperation(options, (client, key) =>
       send(client, key, options.id ?? "", request),
@@ -196,7 +196,7 @@ async function executeChatMutation(
   }
   if (options.file !== undefined)
     throw new CliConfigurationError(
-      "Use either --operation or --file, not both",
+      "Use either --operation or --request-file, not both",
     );
   const operation = options.operation;
   const conversationId =
@@ -217,7 +217,7 @@ async function executeChatMutation(
   const text =
     options.textFile === undefined
       ? undefined
-      : await readChatText(options.textFile);
+      : await readChatText(options.textFile, options.input);
   return executeSavedOperation(options, (client, key, status, origin) =>
     withChatOperation(operation, async (store) => {
       const self = status.accountId.toLowerCase();

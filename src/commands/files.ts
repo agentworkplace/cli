@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { setTimeout as sleep } from "node:timers/promises";
 import { exportFilesLocally } from "../files-export.js";
 import { downloadFileLocally } from "../files-download.js";
 import {
@@ -9,6 +10,7 @@ import {
   parseFileTrashRequest,
   parseFileCopyRequest,
   parseFileDeletionRequest,
+  type AgentWorkplace,
 } from "@agent-workplace/sdk";
 import { executeSavedOperation, type AccessCommandOptions } from "./access.js";
 import {
@@ -21,6 +23,7 @@ import {
   withFileUploadSource,
 } from "../files-operation.js";
 import { CliConfigurationError } from "../errors.js";
+import type { WriteOutput } from "../output.js";
 export async function executeFilesList(
   options: AccessCommandOptions & { after?: string; limit?: number },
 ) {
@@ -45,6 +48,9 @@ export async function executeFilesPut(
     version?: string;
     contentType?: string;
     text?: boolean;
+    /** Seconds to wait for a pending upload to publish. */
+    wait?: number;
+    notice?: WriteOutput;
   },
 ) {
   if (options.file && options.parent !== undefined)
@@ -131,16 +137,65 @@ export async function executeFilesPut(
             };
             await store.write(saved);
           }
-          return client.uploadFileFromSource(
+          const result = await client.uploadFileFromSource(
             { apiKey: key },
             saved.request,
             source,
           );
+          if (result.state !== "pending") return result;
+          if (options.wait !== undefined)
+            return waitForUpload(
+              client,
+              key,
+              status.workplaceId,
+              result.uploadId,
+              options.wait,
+            );
+          if (!options.json)
+            options.notice?.(
+              `Upload ${result.uploadId} is still being processed; check it with files status ${result.uploadId}, or rerun with --wait\n`,
+            );
+          return result;
         },
       ),
     ),
   );
 }
+const bareFileId =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+const retryOnlyMessage =
+  "Files operation is immutable; retry with only --operation, or with all of its original inputs";
+
+/** Poll a pending upload until it leaves `pending` or the wait ends. */
+async function waitForUpload(
+  client: AgentWorkplace,
+  key: string,
+  workplaceId: string,
+  uploadId: string,
+  seconds: number,
+) {
+  const deadline = Date.now() + seconds * 1000;
+  for (;;) {
+    const remaining = deadline - Date.now();
+    if (remaining <= 0)
+      throw new CliConfigurationError(
+        `Upload ${uploadId} is still pending after ${seconds} seconds; check it with files status ${uploadId}`,
+      );
+    await sleep(Math.min(uploadPollMilliseconds, remaining));
+    const current = await client.getFileUpload(
+      { apiKey: key },
+      { workplaceId, uploadId },
+    );
+    if (current.state !== "pending") return current;
+  }
+}
+let uploadPollMilliseconds = 2000;
+/** Test hook: shorten the pending-upload poll interval. */
+export function setUploadPollInterval(milliseconds: number) {
+  uploadPollMilliseconds = milliseconds;
+}
+
 export async function executeFilesGet(
   options: AccessCommandOptions & {
     reference: string;
@@ -154,7 +209,12 @@ export async function executeFilesGet(
       key,
       { origin, accountId: status.accountId, workplaceId: status.workplaceId },
       {
-        ref: parseFileReference(options.reference),
+        // A bare file UUID names a file in the credential's workplace.
+        ref: parseFileReference(
+          bareFileId.test(options.reference)
+            ? `awp:file:${status.workplaceId}:${options.reference}`
+            : options.reference,
+        ),
         output: options.output,
         operation: options.operation,
       },
@@ -284,16 +344,12 @@ export async function executeFilesOrganize(
     parent?: string;
   },
 ) {
-  if (
-    options.action === "organize" &&
-    options.name === undefined &&
-    options.parent === undefined
-  )
-    throw new CliConfigurationError(
-      "Provide --name, --parent or both to organize an entry",
-    );
-  if (options.action === "create_folder" && !options.name?.trim())
-    throw new CliConfigurationError("Provide a folder --name");
+  const inputs = [
+    options.entry,
+    options.expectedVersion,
+    options.name,
+    options.parent,
+  ];
   await executeSavedOperation(options, (client, key, status, origin) =>
     withFilesOrganizationOperation(options.operation, async (store) => {
       const saved = await store.read();
@@ -306,6 +362,31 @@ export async function executeFilesOrganize(
         throw new CliConfigurationError(
           "Files operation belongs to another server, workplace or account",
         );
+      if (saved && saved.request.action !== options.action)
+        throw new CliConfigurationError(
+          "Use the original Files command to retry this operation",
+        );
+      if (saved && inputs.every((input) => input === undefined))
+        return client.organizeFiles({ apiKey: key }, saved.request);
+      if (!saved) {
+        if (
+          options.action !== "create_folder" &&
+          (options.entry === undefined || options.expectedVersion === undefined)
+        )
+          throw new CliConfigurationError(
+            "A new Files operation requires the entry and --expected-version",
+          );
+        if (
+          options.action === "organize" &&
+          options.name === undefined &&
+          options.parent === undefined
+        )
+          throw new CliConfigurationError(
+            "Provide --name, --parent or both to organize an entry",
+          );
+        if (options.action === "create_folder" && !options.name?.trim())
+          throw new CliConfigurationError("Provide a folder --name");
+      }
       const request = parseFilesOrganizationRequest({
         workplaceId: status.workplaceId,
         operationId: saved?.request.operationId ?? randomUUID(),
@@ -322,9 +403,7 @@ export async function executeFilesOrganize(
           : { parentId: options.parent === "root" ? null : options.parent }),
       });
       if (saved && JSON.stringify(saved.request) !== JSON.stringify(request))
-        throw new CliConfigurationError(
-          "Files operation is immutable; retry its original inputs",
-        );
+        throw new CliConfigurationError(retryOnlyMessage);
       if (!saved)
         await store.write({
           version: 1,
@@ -340,12 +419,25 @@ export async function executeFilesOrganize(
 export async function executeFilesCopy(
   options: AccessCommandOptions & {
     operation: string;
-    file: string;
+    file?: string;
     revision?: string;
-    name: string;
+    name?: string;
     parent?: string;
   },
 ) {
+  const finish = async (
+    client: AgentWorkplace,
+    key: string,
+    request: Parameters<AgentWorkplace["beginFileCopy"]>[1],
+  ) => {
+    const begun = await client.beginFileCopy({ apiKey: key }, request);
+    return begun.state === "pending"
+      ? client.finalizeFileUpload(
+          { apiKey: key },
+          { workplaceId: request.workplaceId, uploadId: begun.uploadId },
+        )
+      : begun;
+  };
   await executeSavedOperation(options, (client, key, status, origin) =>
     withFilesCopyOperation(options.operation, async (store) => {
       const saved = await store.read();
@@ -358,13 +450,24 @@ export async function executeFilesCopy(
         throw new CliConfigurationError(
           "Files operation belongs to another server, workplace or account",
         );
+      if (
+        saved &&
+        [options.file, options.revision, options.name, options.parent].every(
+          (input) => input === undefined,
+        )
+      )
+        return finish(client, key, saved.request);
+      if (!saved && (options.file === undefined || options.name === undefined))
+        throw new CliConfigurationError(
+          "A new Files copy requires the file and --name",
+        );
       const revisionId =
         options.revision ??
         saved?.request.revisionId ??
         (
           await client.getFile(
             { apiKey: key },
-            { workplaceId: status.workplaceId, fileId: options.file },
+            { workplaceId: status.workplaceId, fileId: options.file! },
           )
         ).revisionId;
       const request = parseFileCopyRequest({
@@ -383,9 +486,7 @@ export async function executeFilesCopy(
           new Date(Date.now() + 55 * 60_000).toISOString(),
       });
       if (saved && JSON.stringify(saved.request) !== JSON.stringify(request))
-        throw new CliConfigurationError(
-          "Files operation is immutable; retry its original inputs",
-        );
+        throw new CliConfigurationError(retryOnlyMessage);
       if (!saved)
         await store.write({
           version: 1,
@@ -393,13 +494,7 @@ export async function executeFilesCopy(
           accountId: status.accountId,
           request,
         });
-      const begun = await client.beginFileCopy({ apiKey: key }, request);
-      return begun.state === "pending"
-        ? client.finalizeFileUpload(
-            { apiKey: key },
-            { workplaceId: request.workplaceId, uploadId: begun.uploadId },
-          )
-        : begun;
+      return finish(client, key, request);
     }),
   );
 }
@@ -424,9 +519,9 @@ export async function executeFilesHistory(
 }
 export async function executeFilesRestore(
   options: AccessCommandOptions & {
-    file: string;
-    revision: string;
-    expectedVersion: string;
+    file?: string;
+    revision?: string;
+    expectedVersion?: string;
     operation: string;
   },
 ) {
@@ -442,6 +537,22 @@ export async function executeFilesRestore(
         throw new CliConfigurationError(
           "Files operation belongs to another server, workplace or account",
         );
+      if (
+        saved &&
+        [options.file, options.revision, options.expectedVersion].every(
+          (input) => input === undefined,
+        )
+      )
+        return client.restoreFileRevision({ apiKey: key }, saved.request);
+      if (
+        !saved &&
+        (options.file === undefined ||
+          options.revision === undefined ||
+          options.expectedVersion === undefined)
+      )
+        throw new CliConfigurationError(
+          "A new Files restoration requires the file, --revision and --expected-version",
+        );
       const request = parseRestoreFileRevisionRequest({
         workplaceId: status.workplaceId,
         operationId: saved?.request.operationId ?? randomUUID(),
@@ -450,9 +561,7 @@ export async function executeFilesRestore(
         expectedVersion: options.expectedVersion,
       });
       if (saved && JSON.stringify(saved.request) !== JSON.stringify(request))
-        throw new CliConfigurationError(
-          "Files operation is immutable; retry its original inputs",
-        );
+        throw new CliConfigurationError(retryOnlyMessage);
       if (!saved)
         await store.write({
           version: 1,
@@ -509,8 +618,8 @@ export async function executeFilesTrashList(
 export async function executeFilesTrash(
   options: AccessCommandOptions & {
     action: "trash" | "restore";
-    file: string;
-    expectedVersion: string;
+    file?: string;
+    expectedVersion?: string;
     operation: string;
     parent?: string;
     name?: string;
@@ -532,6 +641,24 @@ export async function executeFilesTrash(
         throw new CliConfigurationError(
           "Files operation belongs to another server, workplace or account",
         );
+      if (saved && saved.request.action !== options.action)
+        throw new CliConfigurationError(
+          "Use the original Files command to retry this operation",
+        );
+      if (
+        saved &&
+        [options.file, options.expectedVersion, options.parent].every(
+          (input) => input === undefined,
+        )
+      )
+        return client.changeFileTrash({ apiKey: key }, saved.request);
+      if (
+        !saved &&
+        (options.file === undefined || options.expectedVersion === undefined)
+      )
+        throw new CliConfigurationError(
+          "A new Files trash or restore requires the file and --expected-version",
+        );
       const request = parseFileTrashRequest({
         action: options.action,
         workplaceId: status.workplaceId,
@@ -548,9 +675,7 @@ export async function executeFilesTrash(
           : {}),
       });
       if (saved && JSON.stringify(saved.request) !== JSON.stringify(request))
-        throw new CliConfigurationError(
-          "Files operation is immutable; retry its original inputs",
-        );
+        throw new CliConfigurationError(retryOnlyMessage);
       if (!saved)
         await store.write({
           version: 1,
@@ -588,8 +713,8 @@ export async function executeFilesTrashStatus(
 export async function executeFilesDeletion(
   options: AccessCommandOptions & {
     action: "purge" | "clear_history";
-    file: string;
-    expectedVersion: string;
+    file?: string;
+    expectedVersion?: string;
     operation: string;
   },
 ) {
@@ -605,6 +730,24 @@ export async function executeFilesDeletion(
         throw new CliConfigurationError(
           "Files operation belongs to another server, workplace or account",
         );
+      if (saved && saved.request.action !== options.action)
+        throw new CliConfigurationError(
+          "Use the original Files command to retry this operation",
+        );
+      if (
+        saved &&
+        [options.file, options.expectedVersion].every(
+          (input) => input === undefined,
+        )
+      )
+        return client.beginFileDeletion({ apiKey: key }, saved.request);
+      if (
+        !saved &&
+        (options.file === undefined || options.expectedVersion === undefined)
+      )
+        throw new CliConfigurationError(
+          "A new Files deletion requires the file and --expected-version",
+        );
       const request = parseFileDeletionRequest({
         action: options.action,
         workplaceId: status.workplaceId,
@@ -613,9 +756,7 @@ export async function executeFilesDeletion(
         operationId: saved?.request.operationId ?? randomUUID(),
       });
       if (saved && JSON.stringify(saved.request) !== JSON.stringify(request))
-        throw new CliConfigurationError(
-          "Files operation is immutable; retry its original inputs",
-        );
+        throw new CliConfigurationError(retryOnlyMessage);
       if (!saved)
         await store.write({
           version: 1,
