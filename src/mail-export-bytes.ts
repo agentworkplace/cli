@@ -85,8 +85,8 @@ async function digest(h: FileHandle, bytes: number) {
 /** One immutable retained Mail payload (at most 10 decimal MB). A killed write
  * retries the same owned candidate. Only verified bytes are linked into place;
  * recovery recognizes that exact inode after a lost publication receipt. Once
- * the completion receipt is saved, its recorded identity verifies the output
- * and the hidden candidate link is removed. */
+ * the completion receipt is saved the hidden candidate link is removed, and a
+ * retry verifies the published file's length and digest. */
 export async function exportMailBytes(input: {
   operation: string;
   output: string;
@@ -175,11 +175,16 @@ export async function exportMailBytes(input: {
         await syncDirectory(directory);
       };
       if (r.state === "complete") {
-        // A completed item needs only its recorded identity: a removed,
-        // replaced or changed output fails instead of being recreated.
+        // Without its candidate link the completed inode can be freed and its
+        // number reused, so a retry verifies the published bytes. A removed or
+        // changed output fails and is never recreated.
         const published = await exists(output);
-        if (!published || !same(published, r.file!)) throw fail();
-        await removeCandidate(r);
+        if (!published) throw fail();
+        if (await exists(r.candidate)) {
+          // A crash left the candidate, which still pins the recorded inode.
+          if (!same(published, r.file!)) throw fail();
+          await removeCandidate(r);
+        }
         await check();
         const handle = await open(
           output,
@@ -189,8 +194,6 @@ export async function exportMailBytes(input: {
           const stat = await handle.stat({ bigint: true });
           privateStat(stat, false);
           if (
-            !same(stat, r.file!) ||
-            stat.nlink !== 1n ||
             stat.size !== BigInt(r.bytes) ||
             (await digest(handle, r.bytes)) !== r.sha256
           )

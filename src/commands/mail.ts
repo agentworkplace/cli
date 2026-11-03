@@ -8,6 +8,22 @@ import {
 } from "../mail-operation.js";
 import { executeSavedOperation, type AccessCommandOptions } from "./access.js";
 import { CliConfigurationError } from "../errors.js";
+/** `Re:` or `Fwd:` plus the source subject, unless it already has one. */
+function defaultSubject(
+  kind: "reply" | "reply_all" | "forward",
+  source: string | undefined,
+) {
+  if (source === undefined)
+    throw new CliConfigurationError(
+      "The source message has no retained subject; pass --subject",
+    );
+  const forward = kind === "forward";
+  const prefixed = forward
+    ? /^\s*(fwd?|fw):/i.test(source)
+    : /^\s*re:/i.test(source);
+  return prefixed ? source : `${forward ? "Fwd" : "Re"}: ${source}`;
+}
+
 export async function executeMailAddress(
   options: AccessCommandOptions & { mailbox?: string },
 ) {
@@ -42,6 +58,7 @@ export async function executeMailSend(
     bodyFile?: string;
     attachmentsFile?: string;
     mailbox?: string;
+    input?: AsyncIterable<string | Uint8Array>;
   },
 ) {
   await executeSavedOperation(options, (client, key, status, origin) =>
@@ -88,7 +105,8 @@ export async function executeMailSend(
           (options.mailbox !== undefined &&
             options.mailbox !== saved.request.mailboxId) ||
           (options.bodyFile !== undefined &&
-            (await readMailText(options.bodyFile)) !== saved.request.text)
+            (await readMailText(options.bodyFile, options.input)) !==
+              saved.request.text)
         )
           throw new CliConfigurationError(
             "Mail operation is immutable; retry with its original inputs",
@@ -123,7 +141,7 @@ export async function executeMailSend(
             ...(options.cc === undefined ? {} : { cc: options.cc }),
             ...(options.bcc === undefined ? {} : { bcc: options.bcc }),
             subject: options.subject,
-            text: await readMailText(options.bodyFile),
+            text: await readMailText(options.bodyFile, options.input),
             ...(attachments === undefined ? {} : { attachments }),
           },
         };
@@ -147,6 +165,7 @@ export async function executeMailCompose(
     bodyFile?: string;
     attachmentsFile?: string;
     mailbox?: string;
+    input?: AsyncIterable<string | Uint8Array>;
   },
 ) {
   await executeSavedOperation(options, (client, key, status, origin) =>
@@ -187,25 +206,32 @@ export async function executeMailCompose(
           (options.bcc !== undefined &&
             JSON.stringify(options.bcc) !== JSON.stringify(request.bcc)) ||
           (options.bodyFile !== undefined &&
-            (await readMailText(options.bodyFile)) !== request.text)
+            (await readMailText(options.bodyFile, options.input)) !==
+              request.text)
         )
           throw new CliConfigurationError(
             "Mail operation is immutable; retry with its original inputs",
           );
       } else {
-        if (
-          !options.message ||
-          options.subject === undefined ||
-          options.bodyFile === undefined
-        )
+        if (!options.message || options.bodyFile === undefined)
           throw new CliConfigurationError(
-            "A new Mail composition requires --message, --subject and --body-file",
+            "A new Mail composition requires --message and --body-file",
           );
         checkMailRecipients(options);
         const mailboxId = options.mailbox ?? status.mailbox?.mailboxId;
         if (!mailboxId)
           throw new CliConfigurationError(
             "Mailbox discovery is unavailable; do not repeat signup",
+          );
+        const subject =
+          options.subject ??
+          defaultSubject(
+            options.kind,
+            (
+              await client.getMailMessage({ apiKey: key }, options.message, {
+                mailboxId,
+              })
+            ).display.subject,
           );
         saved = {
           version: 2,
@@ -217,8 +243,8 @@ export async function executeMailCompose(
             mailboxId,
             kind: options.kind,
             sourceMessageId: options.message,
-            subject: options.subject,
-            text: await readMailText(options.bodyFile),
+            subject,
+            text: await readMailText(options.bodyFile, options.input),
             ...(attachments === undefined ? {} : { attachments }),
             ...(options.to ? { to: options.to } : {}),
             ...(options.cc ? { cc: options.cc } : {}),

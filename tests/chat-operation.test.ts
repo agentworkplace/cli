@@ -391,13 +391,13 @@ test("input mode and new-operation requirements fail locally before any request"
   for (const [args, message] of [
     [
       ["post", "--id", conversationId],
-      "Provide --operation for a CLI-managed operation file, or --file JSON with an explicit operationId",
+      "Provide --operation for a CLI-managed operation file, or --request-file JSON with an explicit operationId",
     ],
     [
       ["post", "--operation", f.operation, "--file", f.text],
-      "Use either --operation or --file, not both",
+      "Use either --operation or --request-file, not both",
     ],
-    [["post", "--file", f.text], "Provide --id with --file"],
+    [["post", "--file", f.text], "Provide --id with --request-file"],
     [
       ["post", "--id", conversationId, "--file", "-", "--text-file", f.text],
       "--account, --topic and --text-file require --operation",
@@ -478,7 +478,7 @@ test("unreadable, oversized or non-text message files fail privately and save no
     ]);
     expect(result.stderr).toBe(
       error(
-        "Chat text must be a readable UTF-8 plain-text file of 1 to 64000 bytes without NUL characters",
+        "Chat text must be readable UTF-8 plain text of 1 to 64000 bytes without NUL characters; use --text-file - for stdin",
       ),
     );
     expect(result.chatCalls).toEqual([]);

@@ -130,9 +130,13 @@ import {
   type CreateDocsClient,
 } from "./commands/docs.js";
 import {
+  canonicalOption,
+  hiddenAlias,
   limitParser,
   mailboxNameParser,
+  resolveAliases,
   validateIdentifiers,
+  waitParser,
 } from "./arguments.js";
 import { writeError, writeUsageError } from "./output.js";
 import type { WriteOutput } from "./output.js";
@@ -201,9 +205,10 @@ export async function runCli(
       outputError: (message, write) =>
         writeUsageError(message, requestsJson, write),
     })
-    .hook("preAction", (_program, actionCommand) =>
-      validateIdentifiers(actionCommand),
-    );
+    .hook("preAction", (_program, actionCommand) => {
+      resolveAliases(actionCommand);
+      validateIdentifiers(actionCommand);
+    });
 
   program.addOption(
     new Option(
@@ -360,7 +365,7 @@ export async function runCli(
     if (name !== "create")
       command.option(
         "--id <id>",
-        "Conversation ID (required with --file or for a new operation)",
+        "Conversation ID (required with --request-file or for a new operation)",
       );
     command.option(
       "--operation <path>",
@@ -372,13 +377,16 @@ export async function runCli(
     if (name === "post")
       command.option(
         "--text-file <path>",
-        "UTF-8 message text, posted byte-exact (required for a new operation)",
+        "UTF-8 message text, posted byte-exact, or - for stdin (required for a new operation)",
       );
     command
-      .option(
-        "--file <path>",
-        `Instead of --operation: JSON with ${fields}; - reads stdin. Reuse saved input after uncertainty.`,
+      .addOption(
+        canonicalOption(
+          "--request-file <path>",
+          `Instead of --operation: JSON with ${fields}; - reads stdin. Reuse saved input after uncertainty.`,
+        ),
       )
+      .addOption(hiddenAlias("--file <path>", "--request-file"))
       .option("--json", "output machine-readable JSON")
       .action(chatAction(execute));
   }
@@ -949,7 +957,7 @@ export async function runCli(
     )
     .option(
       "--dashboard-url <origin>",
-      "Trusted dashboard origin for link file output",
+      "Trusted dashboard origin for link file output; defaults only for production",
     )
     .option("--json", "output machine-readable JSON")
     .action(
@@ -1127,9 +1135,9 @@ export async function runCli(
   roles
     .command("show")
     .description("Show a participant's role and its revision")
-    .requiredOption("--account <uuid>", "Target participant UUID")
+    .option("--account <uuid>", "Participant UUID; defaults to your account")
     .option("--json", "output machine-readable JSON")
-    .action(async (input: { account: string; json?: boolean }) => {
+    .action(async (input: { account?: string; json?: boolean }) => {
       try {
         await executeRoleRead({
           ...productOptions(),
@@ -1196,7 +1204,11 @@ export async function runCli(
       )
       .option("--json", "output machine-readable JSON");
     if (action === "remove-account")
-      command.requiredOption("--account-id <id>", "Target account UUID");
+      command
+        .addOption(
+          canonicalOption("--account <id>", "Target account UUID", true),
+        )
+        .addOption(hiddenAlias("--account-id <id>", "--account"));
     command.action(async (input: { accountId?: string; json?: boolean }) => {
       try {
         await executeParticipantRemoval(
@@ -1215,7 +1227,13 @@ export async function runCli(
   program
     .command("keys")
     .description("List safe agent key metadata")
-    .option("--account-id <id>", "Target agent UUID; defaults to this account")
+    .addOption(
+      canonicalOption(
+        "--account <id>",
+        "Target agent UUID; defaults to this account",
+      ),
+    )
+    .addOption(hiddenAlias("--account-id <id>", "--account"))
     .option("--json", "output machine-readable JSON")
     .action(async (input: { accountId?: string; json?: boolean }) => {
       try {
@@ -1234,7 +1252,13 @@ export async function runCli(
   program
     .command("grants")
     .description("List an agent's active MCP agent grants")
-    .option("--account-id <id>", "Target agent UUID; defaults to this account")
+    .addOption(
+      canonicalOption(
+        "--account <id>",
+        "Target agent UUID; defaults to this account",
+      ),
+    )
+    .addOption(hiddenAlias("--account-id <id>", "--account"))
     .option("--json", "output machine-readable JSON")
     .action(async (input: { accountId?: string; json?: boolean }) => {
       try {
@@ -1254,7 +1278,13 @@ export async function runCli(
     .command("revoke-grant")
     .description("Revoke an MCP agent grant and its refresh tokens")
     .requiredOption("--grant-id <id>", "Grant UUID from grants")
-    .option("--account-id <id>", "Target agent UUID; defaults to this account")
+    .addOption(
+      canonicalOption(
+        "--account <id>",
+        "Target agent UUID; defaults to this account",
+      ),
+    )
+    .addOption(hiddenAlias("--account-id <id>", "--account"))
     .option("--json", "output machine-readable JSON")
     .action(
       async (input: {
@@ -1283,10 +1313,13 @@ export async function runCli(
         action === "rename-key" ? "Rename an agent key" : "Revoke an agent key",
       )
       .requiredOption("--key-id <id>", "Key UUID from keys")
-      .option(
-        "--account-id <id>",
-        "Target agent UUID; defaults to this account",
+      .addOption(
+        canonicalOption(
+          "--account <id>",
+          "Target agent UUID; defaults to this account",
+        ),
       )
+      .addOption(hiddenAlias("--account-id <id>", "--account"))
       .option("--json", "output machine-readable JSON");
     if (action === "rename-key")
       command.requiredOption("--name <name>", "New key name");
@@ -1326,10 +1359,13 @@ export async function runCli(
         "--save-to <path>",
         "Explicit private credential destination",
       )
-      .option(
-        "--account-id <id>",
-        "Target agent UUID; defaults to this account",
+      .addOption(
+        canonicalOption(
+          "--account <id>",
+          "Target agent UUID; defaults to this account",
+        ),
       )
+      .addOption(hiddenAlias("--account-id <id>", "--account"))
       .option("--json", "output machine-readable JSON")
       .action(
         async (input: {
@@ -1428,13 +1464,16 @@ export async function runCli(
     );
   for (const action of ["trash", "restore"] as const) {
     const command = files
-      .command(action === "trash" ? "trash <file>" : "restore-trash <file>")
+      .command(action === "trash" ? "trash [file]" : "restore-trash [file]")
       .description(
         action === "trash"
           ? "Move a file to seven-day trash"
           : "Take a file out of trash with its retained identity",
       )
-      .requiredOption("--expected-version <id>", "Observed entry version")
+      .option(
+        "--expected-version <id>",
+        "Observed entry version (required for a new operation)",
+      )
       .requiredOption(
         "--operation <path>",
         "Private immutable trash/restore receipt",
@@ -1446,9 +1485,9 @@ export async function runCli(
         .option("--name <name>", "Explicit restored name (requires --parent)");
     command.action(
       async (
-        file: string,
+        file: string | undefined,
         options: {
-          expectedVersion: string;
+          expectedVersion?: string;
           operation: string;
           parent?: string;
           name?: string;
@@ -1489,13 +1528,16 @@ export async function runCli(
     });
   for (const action of ["purge", "clear_history"] as const) {
     files
-      .command(action === "purge" ? "purge <file>" : "clear-history <file>")
+      .command(action === "purge" ? "purge [file]" : "clear-history [file]")
       .description(
         action === "purge"
           ? "Irreversibly purge a trashed file (administrator)"
           : "Irreversibly clear old revisions while preserving current content (administrator)",
       )
-      .requiredOption("--expected-version <id>", "Observed entry version")
+      .option(
+        "--expected-version <id>",
+        "Observed entry version (required for a new operation)",
+      )
       .requiredOption(
         "--operation <path>",
         "Private immutable deletion receipt",
@@ -1503,9 +1545,9 @@ export async function runCli(
       .option("--json", "output machine-readable JSON")
       .action(
         async (
-          file: string,
+          file: string | undefined,
           options: {
-            expectedVersion: string;
+            expectedVersion?: string;
             operation: string;
             json?: boolean;
           },
@@ -1571,12 +1613,18 @@ export async function runCli(
       },
     );
   files
-    .command("restore <file>")
+    .command("restore [file]")
     .description(
       "Restore an earlier revision as new current content (see restore-trash to untrash)",
     )
-    .requiredOption("--revision <id>", "Retained source revision")
-    .requiredOption("--expected-version <id>", "Observed current entry version")
+    .option(
+      "--revision <id>",
+      "Retained source revision (required for a new operation)",
+    )
+    .option(
+      "--expected-version <id>",
+      "Observed current entry version (required for a new operation)",
+    )
     .requiredOption(
       "--operation <path>",
       "Private immutable restoration receipt",
@@ -1584,10 +1632,10 @@ export async function runCli(
     .option("--json", "output machine-readable JSON")
     .action(
       async (
-        file: string,
+        file: string | undefined,
         options: {
-          revision: string;
-          expectedVersion: string;
+          revision?: string;
+          expectedVersion?: string;
           operation: string;
           json?: boolean;
         },
@@ -1646,6 +1694,11 @@ export async function runCli(
         "Expected current version for an update",
       )
       .option("--content-type <type>", "Media type of the bytes")
+      .option(
+        "--wait [seconds]",
+        "Wait for a pending upload to publish, up to 300 seconds by default",
+        waitParser,
+      )
       .option("--json", "output machine-readable JSON")
       .action(
         async (options: {
@@ -1656,6 +1709,7 @@ export async function runCli(
           file?: string;
           expectedVersion?: string;
           contentType?: string;
+          wait?: number | true;
           json?: boolean;
         }) => {
           try {
@@ -1664,6 +1718,8 @@ export async function runCli(
               ...options,
               version: options.expectedVersion,
               text: kind === "text",
+              wait: options.wait === true ? 300 : options.wait,
+              notice: writeErr,
               json: options.json ?? false,
               write: writeOut,
             });
@@ -1858,11 +1914,11 @@ export async function runCli(
       },
     );
   files
-    .command("copy <file>")
+    .command("copy [file]")
     .description(
       "Copy a file's current or given revision into a new file on the server",
     )
-    .requiredOption("--name <name>", "Name of the copy")
+    .option("--name <name>", "Name of the copy (required for a new operation)")
     .option("--parent <id>", "Destination folder UUID or root")
     .option("--revision <id>", "Revision to copy; defaults to the current one")
     .requiredOption(
@@ -1872,9 +1928,9 @@ export async function runCli(
     .option("--json", "output machine-readable JSON")
     .action(
       async (
-        file: string,
+        file: string | undefined,
         options: {
-          name: string;
+          name?: string;
           parent?: string;
           revision?: string;
           operation: string;
@@ -1922,8 +1978,8 @@ export async function runCli(
       action === "create_folder"
         ? folders.command("create")
         : action === "delete_folder"
-          ? folders.command("delete <entry>")
-          : files.command("organize <entry>");
+          ? folders.command("delete [entry]")
+          : files.command("organize [entry]");
     command
       .description(
         action === "create_folder"
@@ -1938,12 +1994,15 @@ export async function runCli(
       )
       .option("--json", "output machine-readable JSON");
     if (action !== "create_folder")
-      command.requiredOption(
+      command.option(
         "--expected-version <id>",
-        "Observed current entry version",
+        "Observed current entry version (required for a new operation)",
       );
     if (action === "create_folder")
-      command.requiredOption("--name <name>", "Folder name");
+      command.option(
+        "--name <name>",
+        "Folder name (required for a new operation)",
+      );
     else if (action === "organize") command.option("--name <name>", "New name");
     if (action !== "delete_folder")
       command.option("--parent <id>", "Destination folder UUID or root");
@@ -2615,7 +2674,7 @@ export async function runCli(
     )
     .option(
       "--body-file <path>",
-      "UTF-8 body file (required for a new operation)",
+      "UTF-8 body file, or - for stdin (required for a new operation)",
     )
     .option(
       "--attachments-file <path>",
@@ -2639,6 +2698,7 @@ export async function runCli(
           await executeMailSend({
             ...productOptions(),
             ...commandOptions,
+            input: options.input,
             json: commandOptions.json ?? false,
             write: writeOut,
           });
@@ -2669,11 +2729,11 @@ export async function runCli(
       )
       .option(
         "--subject <text>",
-        "Explicit subject (required for a new operation)",
+        "Subject; defaults to Re: or Fwd: and the source subject",
       )
       .option(
         "--body-file <path>",
-        "UTF-8 reply or forward introduction (required for a new operation)",
+        "UTF-8 reply or forward introduction, or - for stdin (required for a new operation)",
       )
       .option(
         "--attachments-file <path>",
@@ -2708,6 +2768,7 @@ export async function runCli(
           await executeMailCompose({
             ...productOptions(),
             ...commandOptions,
+            input: options.input,
             kind,
             json: commandOptions.json ?? false,
             write: writeOut,

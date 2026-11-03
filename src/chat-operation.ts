@@ -4,7 +4,7 @@ import type {
   ChatLeaveRequest,
   ChatRemoveRequest,
 } from "@agent-workplace/sdk";
-import { readBoundedFile } from "./bounded-file.js";
+import { readBoundedInput } from "./bounded-file.js";
 import { accessOrigin } from "./credentials.js";
 import { CliConfigurationError } from "./errors.js";
 import { withPrivateJsonFile } from "./private-file.js";
@@ -140,17 +140,20 @@ export function withChatOperation<T>(
 
 /** Byte-exact message text: no trimming or BOM removal, so a trailing newline
  * is posted. */
-export async function readChatText(path: string): Promise<string> {
+export async function readChatText(
+  path: string,
+  input?: AsyncIterable<string | Uint8Array>,
+): Promise<string> {
   try {
     const text = new TextDecoder("utf-8", {
       fatal: true,
       ignoreBOM: true,
-    }).decode(await readBoundedFile(path, 64_000));
+    }).decode(await readBoundedInput(path, 64_000, input));
     if (!isChatText(text)) throw new Error("Invalid text");
     return text;
   } catch {
     throw new CliConfigurationError(
-      "Chat text must be a readable UTF-8 plain-text file of 1 to 64000 bytes without NUL characters",
+      "Chat text must be readable UTF-8 plain text of 1 to 64000 bytes without NUL characters; use --text-file - for stdin",
     );
   }
 }

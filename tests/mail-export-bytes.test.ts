@@ -120,11 +120,21 @@ test("Recovery refuses changed content, a substituted destination and a candidat
   await exportMailBytes(f.input);
   await writeFile(f.input.output, Buffer.alloc(f.bytes.length, 0));
   await expect(exportMailBytes(f.input)).rejects.toThrow("changed");
+  // A substitute with other bytes fails, whether or not the filesystem reuses
+  // the completed inode number.
   const g = await fixture();
   await exportMailBytes(g.input);
   await unlink(g.input.output);
-  await writeFile(g.input.output, g.bytes, { mode: 0o600 });
+  await writeFile(g.input.output, Buffer.alloc(g.bytes.length, 1), {
+    mode: 0o600,
+  });
   await expect(exportMailBytes(g.input)).rejects.toThrow("changed");
+  // A shared substitute fails even with the expected bytes.
+  const s = await fixture();
+  await exportMailBytes(s.input);
+  await unlink(s.input.output);
+  await writeFile(s.input.output, s.bytes, { mode: 0o644 });
+  await expect(exportMailBytes(s.input)).rejects.toThrow("changed");
   const h = await fixture();
   await exportMailBytes(h.input);
   const r = await h.receipt();
@@ -154,6 +164,17 @@ test("A completed export leaves no candidate link, and retries verify the output
     code: "ENOENT",
   });
   expect((await lstat(f.input.output)).nlink).toBe(1);
+  f.input.load.mockRejectedValue(new Error("No source"));
+  await expect(exportMailBytes(f.input)).resolves.toMatchObject({
+    bytes: f.bytes.length,
+  });
+  expect(f.input.load).toHaveBeenCalledTimes(1);
+});
+test("A private substitute with the expected bytes is verified, not recreated", async () => {
+  const f = await fixture();
+  await exportMailBytes(f.input);
+  await unlink(f.input.output);
+  await writeFile(f.input.output, f.bytes, { mode: 0o600 });
   f.input.load.mockRejectedValue(new Error("No source"));
   await expect(exportMailBytes(f.input)).resolves.toMatchObject({
     bytes: f.bytes.length,

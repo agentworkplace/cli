@@ -33,3 +33,23 @@ export async function readBoundedFile(
     await file.close();
   }
 }
+
+/** Read a bounded regular file, or standard input for "-". */
+export async function readBoundedInput(
+  path: string,
+  maximumBytes: number,
+  input?: AsyncIterable<string | Uint8Array>,
+): Promise<Uint8Array> {
+  if (path !== "-") return readBoundedFile(path, maximumBytes);
+  if (!input && process.stdin.isTTY)
+    throw new Error("Interactive input unavailable");
+  const chunks: Uint8Array[] = [];
+  let length = 0;
+  for await (const chunk of input ?? process.stdin) {
+    const next = typeof chunk === "string" ? Buffer.from(chunk) : chunk;
+    length += next.byteLength;
+    if (length > maximumBytes) throw new Error("Input too large");
+    chunks.push(next);
+  }
+  return Buffer.concat(chunks);
+}
