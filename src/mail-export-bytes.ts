@@ -1,6 +1,13 @@
 import { createHash, randomUUID } from "node:crypto";
 import { constants, type BigIntStats } from "node:fs";
-import { lstat, open, link, realpath, type FileHandle } from "node:fs/promises";
+import {
+  lstat,
+  open,
+  link,
+  realpath,
+  unlink,
+  type FileHandle,
+} from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import { CliConfigurationError } from "./errors.js";
 import { withPrivateJsonFile } from "./private-file.js";
@@ -77,7 +84,9 @@ async function digest(h: FileHandle, bytes: number) {
 
 /** One immutable retained Mail payload (at most 10 decimal MB). A killed write
  * retries the same owned candidate. Only verified bytes are linked into place;
- * recovery recognizes that exact inode after a lost publication receipt. */
+ * recovery recognizes that exact inode after a lost publication receipt. Once
+ * the completion receipt is saved, its recorded identity verifies the output
+ * and the hidden candidate link is removed. */
 export async function exportMailBytes(input: {
   operation: string;
   output: string;
@@ -158,6 +167,39 @@ export async function exportMailBytes(input: {
         if (!same(stat, r!.directory)) throw fail();
       };
       await check();
+      const removeCandidate = async (receipt: Receipt) => {
+        const candidate = await exists(receipt.candidate);
+        if (!candidate) return;
+        if (!same(candidate, receipt.file!)) throw fail();
+        await unlink(receipt.candidate);
+        await syncDirectory(directory);
+      };
+      if (r.state === "complete") {
+        // A completed item needs only its recorded identity: a removed,
+        // replaced or changed output fails instead of being recreated.
+        const published = await exists(output);
+        if (!published || !same(published, r.file!)) throw fail();
+        await removeCandidate(r);
+        await check();
+        const handle = await open(
+          output,
+          constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+        );
+        try {
+          const stat = await handle.stat({ bigint: true });
+          privateStat(stat, false);
+          if (
+            !same(stat, r.file!) ||
+            stat.nlink !== 1n ||
+            stat.size !== BigInt(r.bytes) ||
+            (await digest(handle, r.bytes)) !== r.sha256
+          )
+            throw fail();
+        } finally {
+          await handle.close();
+        }
+        return { output, bytes: r.bytes, sha256: r.sha256 };
+      }
       const handle = await open(
         r.candidate,
         constants.O_RDWR |
@@ -235,13 +277,15 @@ export async function exportMailBytes(input: {
           beforePublication.ctimeNs !== verified.ctimeNs
         )
           throw fail();
-        if (r.state === "complete" && !published) throw fail();
         if (!published) {
           await link(r.candidate, output);
           await syncDirectory(directory);
         }
         await checkFile();
-        await store.write({ ...r, state: "complete" });
+        const complete: Receipt = { ...r, state: "complete" };
+        await store.write(complete);
+        // Recovery after this point relies on the receipt, not the candidate.
+        await removeCandidate(complete);
         return { output, bytes: r.bytes, sha256: r.sha256 };
       } finally {
         await handle.close();

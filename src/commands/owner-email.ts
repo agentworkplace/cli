@@ -108,7 +108,15 @@ export function executeOwnerEmailHandoff(options: {
   json: boolean;
   write: WriteOutput;
 }) {
-  const url = `${accessOrigin(options.dashboardUrl)}/#owner-email`;
+  let origin: string;
+  try {
+    origin = accessOrigin(options.dashboardUrl);
+  } catch {
+    throw new CliConfigurationError(
+      "--dashboard-url must be an HTTPS dashboard origin with no path, or HTTP on loopback",
+    );
+  }
+  const url = `${origin}/#owner-email`;
   options.write(
     options.json
       ? `${JSON.stringify({ url })}\n`

@@ -11,7 +11,7 @@ import { executeSavedOperation, type AccessCommandOptions } from "./access.js";
 import {
   accessOrigin,
   environmentApiKey,
-  withCredentials,
+  readCredentials,
 } from "../credentials.js";
 import { productClient, productionApiOrigin } from "../client.js";
 import { CliConfigurationError } from "../errors.js";
@@ -265,9 +265,7 @@ async function notificationWaitCredential(options: AccessCommandOptions) {
     };
   }
   // Read and release the credential-file lock before a potentially unbounded wait.
-  const state = await withCredentials(options.credentials, (store) =>
-    store.read(),
-  );
+  const state = await readCredentials(options.credentials);
   if (!state?.credential)
     throw new CliConfigurationError(
       "No saved credentials; save an account key or complete signup first",

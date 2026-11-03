@@ -5,6 +5,7 @@ import {
   type ComposeMailRequest,
   type SendMailRequest,
 } from "@agent-workplace/sdk";
+import { randomUUID } from "node:crypto";
 import { readBoundedFile } from "./bounded-file.js";
 import { accessOrigin } from "./credentials.js";
 import { CliConfigurationError } from "./errors.js";
@@ -24,6 +25,38 @@ const uuid =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 function invalid() {
   return new CliConfigurationError("Invalid Mail operation file");
+}
+
+/**
+ * Name the recipient option at fault before a new operation is saved; a
+ * rejected address would otherwise read as a corrupt operation file.
+ */
+export function checkMailRecipients(recipients: {
+  to?: string | string[] | undefined;
+  cc?: string[] | undefined;
+  bcc?: string[] | undefined;
+}) {
+  for (const [flag, value] of [
+    ["--to", recipients.to],
+    ["--cc", recipients.cc],
+    ["--bcc", recipients.bcc],
+  ] as const)
+    for (const address of value === undefined
+      ? []
+      : Array.isArray(value)
+        ? value
+        : [value])
+      try {
+        parseMailSendRequest({
+          operationId: randomUUID(),
+          mailboxId: randomUUID(),
+          to: address,
+          subject: "Recipient check",
+          text: "Recipient check",
+        });
+      } catch {
+        throw new CliConfigurationError(`Invalid ${flag} address: ${address}`);
+      }
 }
 function validate(value: unknown): SavedMailOperation {
   if (!value || typeof value !== "object") throw invalid();

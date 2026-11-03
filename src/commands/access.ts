@@ -14,6 +14,7 @@ import {
 import {
   accessOrigin,
   environmentApiKey,
+  readCredentials,
   requireCredentialFile,
   withCredentials,
   type CredentialSourceOptions,
@@ -42,7 +43,7 @@ function signupOutput(status: AccessStatus, json: boolean, write: WriteOutput) {
       : delivery === "uncertain"
         ? "Check status before retrying nomination delivery."
         : delivery === "accepted"
-          ? "Read the nomination ID from status before confirming ownership."
+          ? "The nominated owner confirms from the emailed link; check status for progress."
           : "Check status for the current nomination and next step.";
   write(
     [
@@ -75,6 +76,9 @@ export async function executeSignup(
   },
 ) {
   requireCredentialFile(options);
+  // Reject conflicting choices before the first bootstrap save.
+  if (options.mailboxName !== undefined && options.mailboxDefault)
+    throw new CliConfigurationError("Choose only one mailbox address option");
   await withCredentials(options.credentials, async (store) => {
     let state = await store.read();
     if (state?.version === 1)
@@ -104,8 +108,6 @@ export async function executeSignup(
       };
       await store.write(state); // Must complete before the first HTTP request.
     }
-    if (options.mailboxName !== undefined && options.mailboxDefault)
-      throw new CliConfigurationError("Choose only one mailbox address option");
     const selected: MailboxAddressChoice | undefined =
       options.mailboxName !== undefined
         ? { kind: "exact", localPart: options.mailboxName }
@@ -279,36 +281,36 @@ export async function executeSavedOperation(
     );
     return;
   }
-  await withCredentials(options.credentials, async (store) => {
-    const state = await store.read();
-    if (!state?.credential)
-      throw new CliConfigurationError(
-        "No saved credentials; save an account key or complete signup first",
-      );
-    if (
-      options.baseUrl !== undefined &&
-      accessOrigin(options.baseUrl) !== state.origin
-    )
-      throw new CliConfigurationError(
-        "Saved credentials belong to another API origin",
-      );
-    const client = productClient(options, state.origin);
-    const status = await client.accountStatus({ apiKey: state.credential.key });
-    if (
-      status.accountId !== state.credential.accountId ||
-      status.workplaceId !== state.credential.workplaceId
-    )
-      throw new CliConfigurationError(
-        "Saved credential account does not match the API response",
-      );
-    const result = await operation(
-      client,
-      state.credential.key,
-      status,
-      state.origin,
+  // Release the credential lock before any request so commands can run in
+  // parallel; only commands that write credential state hold it throughout.
+  const state = await readCredentials(options.credentials);
+  if (!state?.credential)
+    throw new CliConfigurationError(
+      "No saved credentials; save an account key or complete signup first",
     );
-    output(result, options.json, options.write);
-  });
+  if (
+    options.baseUrl !== undefined &&
+    accessOrigin(options.baseUrl) !== state.origin
+  )
+    throw new CliConfigurationError(
+      "Saved credentials belong to another API origin",
+    );
+  const client = productClient(options, state.origin);
+  const status = await client.accountStatus({ apiKey: state.credential.key });
+  if (
+    status.accountId !== state.credential.accountId ||
+    status.workplaceId !== state.credential.workplaceId
+  )
+    throw new CliConfigurationError(
+      "Saved credential account does not match the API response",
+    );
+  const result = await operation(
+    client,
+    state.credential.key,
+    status,
+    state.origin,
+  );
+  output(result, options.json, options.write);
 }
 
 export async function executeCurrentNomination(options: AccessCommandOptions) {

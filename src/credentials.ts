@@ -188,6 +188,15 @@ export function credentialFilePath(configuredPath: string | undefined) {
   );
 }
 
+/**
+ * Read the saved state and release the lock at once. Writes replace the file
+ * atomically, so a command that only uses the saved key need not hold the
+ * lock while it calls the API; only credential writers serialize.
+ */
+export function readCredentials(configuredPath: string | undefined) {
+  return withCredentials(configuredPath, (store) => store.read());
+}
+
 export async function withCredentials<T>(
   configuredPath: string | undefined,
   operation: (store: {

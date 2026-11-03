@@ -284,6 +284,16 @@ export async function executeFilesOrganize(
     parent?: string;
   },
 ) {
+  if (
+    options.action === "organize" &&
+    options.name === undefined &&
+    options.parent === undefined
+  )
+    throw new CliConfigurationError(
+      "Provide --name, --parent or both to organize an entry",
+    );
+  if (options.action === "create_folder" && !options.name?.trim())
+    throw new CliConfigurationError("Provide a folder --name");
   await executeSavedOperation(options, (client, key, status, origin) =>
     withFilesOrganizationOperation(options.operation, async (store) => {
       const saved = await store.read();

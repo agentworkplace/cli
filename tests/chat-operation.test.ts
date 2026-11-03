@@ -428,7 +428,10 @@ test("input mode and new-operation requirements fail locally before any request"
       "A Chat removal takes exactly one --account",
     ],
     [
-      ["add", "--operation", f.operation, "--id", "not-a-uuid"],
+      [
+        ...["add", "--operation", f.operation],
+        ...["--id", "00000000-0000-0000-0000-000000000000"],
+      ],
       "Chat --id and --account values must be UUIDs",
     ],
     [

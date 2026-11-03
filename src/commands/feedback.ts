@@ -39,10 +39,17 @@ async function readMessage(
     return readStdin(input ?? process.stdin);
   }
   const path = options.messageFile!;
-  const info = await stat(path);
-  if (!info.isFile() || info.size > maximumInputBytes)
+  const unreadable = () =>
+    new CliConfigurationError("Unable to read the feedback message file");
+  const info = await stat(path).catch(() => {
+    throw unreadable();
+  });
+  if (!info.isFile()) throw unreadable();
+  if (info.size > maximumInputBytes)
     throw new CliConfigurationError("Feedback message file is too large");
-  const file = await open(path, "r");
+  const file = await open(path, "r").catch(() => {
+    throw unreadable();
+  });
   try {
     const bytes = await file.readFile();
     if (bytes.length > maximumInputBytes)
@@ -64,25 +71,27 @@ export async function executeFeedbackSend(
   },
 ) {
   const submissionId = options.submissionId ?? randomUUID();
-  try {
-    if (
-      !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
-        submissionId,
-      )
+  if (
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+      submissionId,
     )
-      throw new CliConfigurationError("Invalid submission ID");
-    if (
-      options.category !== undefined &&
-      !["bug", "suggestion", "general"].includes(options.category)
-    )
-      throw new CliConfigurationError("Invalid feedback category");
-    const message = await readMessage(options, options.input);
-    if (!message.trim() || new TextEncoder().encode(message).length > 4096)
-      throw new CliConfigurationError(
-        "Feedback message must contain 1–4096 UTF-8 bytes",
-      );
-    await executeSavedOperation(options, (client, key) =>
-      client.submitFeedback(
+  )
+    throw new CliConfigurationError("Invalid submission ID");
+  if (
+    options.category !== undefined &&
+    !["bug", "suggestion", "general"].includes(options.category)
+  )
+    throw new CliConfigurationError("Invalid feedback category");
+  const message = await readMessage(options, options.input);
+  if (!message.trim() || new TextEncoder().encode(message).length > 4096)
+    throw new CliConfigurationError(
+      "Feedback message must contain 1–4096 UTF-8 bytes",
+    );
+  await executeSavedOperation(options, async (client, key) => {
+    // Only a dispatched submission has an uncertain outcome worth retrying
+    // under the same ID; local failures above sent nothing.
+    try {
+      return await client.submitFeedback(
         { apiKey: key },
         {
           submissionId,
@@ -90,9 +99,9 @@ export async function executeFeedbackSend(
           ...(options.category ? { category: options.category } : {}),
           ...(options.requestId ? { relatedRequestId: options.requestId } : {}),
         },
-      ),
-    );
-  } catch (error) {
-    throw new FeedbackCommandError(submissionId, error);
-  }
+      );
+    } catch (error) {
+      throw new FeedbackCommandError(submissionId, error);
+    }
+  });
 }

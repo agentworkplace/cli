@@ -122,14 +122,19 @@ import {
   executeNominationAuthorization,
 } from "./commands/access.js";
 import { CliConfigurationError } from "./errors.js";
-import { Command, CommanderError, Option } from "commander";
+import { Command, CommanderError, Help, Option } from "commander";
 
 import {
   executeDocsListOrRead,
   executeDocsSearch,
   type CreateDocsClient,
 } from "./commands/docs.js";
-import { writeError } from "./output.js";
+import {
+  limitParser,
+  mailboxNameParser,
+  validateIdentifiers,
+} from "./arguments.js";
+import { writeError, writeUsageError } from "./output.js";
 import type { WriteOutput } from "./output.js";
 
 interface GlobalOptions {
@@ -172,18 +177,38 @@ export async function runCli(
   const apiUrlOverride = process.env.AGENT_WORKPLACE_API_URL;
   const environmentApiKey = process.env.AGENT_WORKPLACE_API_KEY;
   let failure: OperationalFailure | undefined;
+  // Usage errors happen before options are parsed, so look for --json directly.
+  const terminator = arguments_.indexOf("--");
+  const requestsJson = (
+    terminator === -1 ? arguments_ : arguments_.slice(0, terminator)
+  ).includes("--json");
 
   const program = new Command()
     .name("agent-workplace")
     .description("Command-line interface for Agent Workplace")
     .version(options.version)
     .exitOverride()
-    .configureOutput({ writeOut, writeErr });
+    .configureHelp({
+      // Commander does not mark mandatory options in help on its own.
+      optionDescription(option) {
+        const description = Help.prototype.optionDescription.call(this, option);
+        return option.mandatory ? `${description} (required)` : description;
+      },
+    })
+    .configureOutput({
+      writeOut,
+      writeErr,
+      outputError: (message, write) =>
+        writeUsageError(message, requestsJson, write),
+    })
+    .hook("preAction", (_program, actionCommand) =>
+      validateIdentifiers(actionCommand),
+    );
 
   program.addOption(
     new Option(
       "--credentials <path>",
-      "Private credential file; AGENT_WORKPLACE_API_KEY supplies a read-only key instead",
+      "Private credential file; AGENT_WORKPLACE_API_KEY supplies a key that is never saved instead",
     ).env("AGENT_WORKPLACE_CREDENTIALS_FILE"),
   );
 
@@ -245,7 +270,7 @@ export async function runCli(
       "List accessible conversations, in creation order unless --order activity",
     )
     .option("--after <cursor>", "Continue a page of the same order")
-    .option("--limit <count>", "Page size, at most 50")
+    .option("--limit <count>", "Page size, at most 50", limitParser(50))
     .addOption(
       new Option(
         "--order <order>",
@@ -282,7 +307,7 @@ export async function runCli(
     .description("Read ascending entries after an exclusive sequence")
     .requiredOption("--id <id>", "Conversation ID")
     .option("--after <sequence>", "Last observed sequence; defaults to 0")
-    .option("--limit <count>", "Page size, at most 50")
+    .option("--limit <count>", "Page size, at most 50", limitParser(50))
     .addOption(chatInclude())
     .option("--json", "output machine-readable JSON")
     .action(
@@ -404,19 +429,22 @@ export async function runCli(
     };
   notifications
     .command("list")
+    .description("List notifications, unread only unless --all")
     .option("--account <id>", "Owner/admin inspection target")
     .option("--all", "Include read items")
     .option("--after <cursor>", "Continue a list page")
-    .option("--limit <count>", "Page size, at most 100")
+    .option("--limit <count>", "Page size, at most 100", limitParser(100))
     .option("--json", "output machine-readable JSON")
     .action(notificationAction(executeNotificationList));
   notifications
     .command("status")
+    .description("Show the unread count and current notification position")
     .option("--account <id>", "Owner/admin inspection target")
     .option("--json", "output machine-readable JSON")
     .action(notificationAction(executeNotificationStatus));
   notifications
     .command("read")
+    .description("Mark one notification, or all through a position, as read")
     .option("--id <id>", "Notification ID")
     .option("--all", "Acknowledge all items through the observed position")
     .requiredOption(
@@ -469,12 +497,18 @@ export async function runCli(
     );
   endpoints
     .command("list")
+    .description("List registered notification endpoints")
     .option("--account <id>", "Owner/admin management target")
     .option("--json", "output machine-readable JSON")
     .action(notificationAction(executeNotificationEndpointList));
   for (const command of ["inspect", "remove"] as const)
     endpoints
       .command(command)
+      .description(
+        command === "inspect"
+          ? "Show one notification endpoint"
+          : "Remove a notification endpoint",
+      )
       .requiredOption("--id <id>", "Notification endpoint ID")
       .option("--account <id>", "Owner/admin management target")
       .option("--json", "output machine-readable JSON")
@@ -628,6 +662,7 @@ export async function runCli(
     .description("Read and edit workplace participant profiles");
   profile
     .command("show")
+    .description("Show a participant profile; defaults to your own")
     .option("--account <id>", "Participant UUID; defaults to your account")
     .option("--json", "output machine-readable JSON")
     .action(async (input: { account?: string; json?: boolean }) => {
@@ -644,6 +679,7 @@ export async function runCli(
     });
   profile
     .command("update")
+    .description("Change a profile name or description at an observed revision")
     .requiredOption("--revision <uuid>", "Revision returned by profile show")
     .option("--account <id>", "Participant UUID; defaults to your account")
     .option("--name <name>", "New display name")
@@ -676,6 +712,7 @@ export async function runCli(
     .description("Read and edit your workplace settings");
   workplace
     .command("show")
+    .description("Show the workplace name, description and revision")
     .option("--json", "output machine-readable JSON")
     .action(async (input: { json?: boolean }) => {
       try {
@@ -690,6 +727,9 @@ export async function runCli(
     });
   workplace
     .command("update")
+    .description(
+      "Change the workplace name or description at an observed revision",
+    )
     .requiredOption("--revision <uuid>", "Revision returned by workplace show")
     .option("--name <name>", "New workplace name")
     .option("--description <text>", "New plain-text description")
@@ -817,6 +857,7 @@ export async function runCli(
     });
   billing
     .command("status")
+    .description("Show the plan, price, subscription and any pending command")
     .option("--json", "output machine-readable JSON")
     .action(async (input: { json?: boolean }) => {
       try {
@@ -889,6 +930,7 @@ export async function runCli(
     .description("Invite participants and privately join a workplace");
   invitations
     .command("create-human")
+    .description("Invite a human by login email")
     .requiredOption("--email <email>", "Intended human login email")
     .option("--name <name>", "Invited human display name")
     .addOption(
@@ -934,6 +976,7 @@ export async function runCli(
     );
   invitations
     .command("create")
+    .description("Invite an agent and save its private invite link")
     .requiredOption("--name <name>", "Invited agent display name")
     .addOption(
       new Option("--role <role>", "Initial workplace role").choices([
@@ -977,6 +1020,7 @@ export async function runCli(
     );
   invitations
     .command("list")
+    .description("List the workplace's invitations and their states")
     .option("--after <id>", "Continue after this invitation UUID")
     .option("--json", "output machine-readable JSON")
     .action(async (input: { after?: string; json?: boolean }) => {
@@ -991,6 +1035,7 @@ export async function runCli(
     });
   invitations
     .command("cancel <invitationId>")
+    .description("Cancel a pending invitation")
     .option("--json", "output machine-readable JSON")
     .action(async (id: string, input: JsonOptions) => {
       try {
@@ -1004,6 +1049,7 @@ export async function runCli(
     });
   invitations
     .command("preview")
+    .description("Preview an agent invitation without joining")
     .option("--link <stdin>", "Use - to read the agent invite link from stdin")
     .option("--link-file <path>", "Private file containing the invite link")
     .option(
@@ -1030,6 +1076,9 @@ export async function runCli(
     });
   invitations
     .command("join")
+    .description(
+      "Join a workplace from an agent invitation and save credentials",
+    )
     .option(
       "--link <stdin>",
       "Use - to read the agent invite link from stdin; retries use the saved private attempt",
@@ -1046,6 +1095,7 @@ export async function runCli(
     .option(
       "--mailbox-name <label>",
       "Exact Mailbox name; resolve an earlier attempt before replacing a rejected choice",
+      mailboxNameParser,
     )
     .option("--mailbox-default", "Use the automatic Mailbox name")
     .option("--json", "output machine-readable JSON")
@@ -1076,6 +1126,7 @@ export async function runCli(
     .description("Read or change participant roles");
   roles
     .command("show")
+    .description("Show a participant's role and its revision")
     .requiredOption("--account <uuid>", "Target participant UUID")
     .option("--json", "output machine-readable JSON")
     .action(async (input: { account: string; json?: boolean }) => {
@@ -1092,6 +1143,7 @@ export async function runCli(
     });
   roles
     .command("update")
+    .description("Change a participant's role at an observed revision")
     .requiredOption("--account <uuid>", "Target participant UUID")
     .requiredOption("--revision <uuid>", "Observed role revision")
     .addOption(
@@ -1326,8 +1378,9 @@ export async function runCli(
     .description("Publish, read and update shared Files");
   files
     .command("list")
+    .description("List current files, newest first")
     .option("--after <cursor>", "Continue listing")
-    .option("--limit <count>", "Page size, 1–100")
+    .option("--limit <count>", "Page size, 1–100", limitParser(100))
     .option("--json", "output machine-readable JSON")
     .action(
       async (options: { after?: string; limit?: string; json?: boolean }) => {
@@ -1349,7 +1402,7 @@ export async function runCli(
     .command("trashed")
     .description("List recoverable trashed files")
     .option("--after <cursor>", "Continue listing")
-    .option("--limit <count>", "Page size, 1–100")
+    .option("--limit <count>", "Page size, 1–100", limitParser(100))
     .option("--query <text>", "Only names containing this text")
     .option("--json", "output machine-readable JSON")
     .action(
@@ -1379,7 +1432,7 @@ export async function runCli(
       .description(
         action === "trash"
           ? "Move a file to seven-day trash"
-          : "Restore a trashed file with its retained identity",
+          : "Take a file out of trash with its retained identity",
       )
       .requiredOption("--expected-version <id>", "Observed entry version")
       .requiredOption(
@@ -1495,7 +1548,7 @@ export async function runCli(
     .command("history <file>")
     .description("List retained revisions and expiry")
     .option("--after <cursor>", "Continue history")
-    .option("--limit <count>", "Page size, 1–100")
+    .option("--limit <count>", "Page size, 1–100", limitParser(100))
     .option("--json", "output machine-readable JSON")
     .action(
       async (
@@ -1519,7 +1572,9 @@ export async function runCli(
     );
   files
     .command("restore <file>")
-    .description("Restore a retained revision as new current content")
+    .description(
+      "Restore an earlier revision as new current content (see restore-trash to untrash)",
+    )
     .requiredOption("--revision <id>", "Retained source revision")
     .requiredOption("--expected-version <id>", "Observed current entry version")
     .requiredOption(
@@ -1637,7 +1692,7 @@ export async function runCli(
     .command("changes")
     .description("Read Files changes or a baseline-required gap")
     .requiredOption("--cursor <cursor>", "Saved checkpoint or next-page cursor")
-    .option("--limit <count>", "Page size, 1–100")
+    .option("--limit <count>", "Page size, 1–100", limitParser(100))
     .option("--json", "output machine-readable JSON")
     .action(
       async (options: { json?: boolean; cursor: string; limit?: string }) => {
@@ -1659,7 +1714,7 @@ export async function runCli(
     .command("baseline")
     .description("List retained Files and folders without a snapshot")
     .option("--after <cursor>", "Continue the baseline listing")
-    .option("--limit <count>", "Page size, 1–100")
+    .option("--limit <count>", "Page size, 1–100", limitParser(100))
     .option("--json", "output machine-readable JSON")
     .action(
       async (options: { json?: boolean; after?: string; limit?: string }) => {
@@ -1690,7 +1745,7 @@ export async function runCli(
     )
     .option("--desc", "Descending order (with --order)")
     .option("--cursor <cursor>", "Continue an ordered listing")
-    .option("--limit <count>", "Page size, 1–100")
+    .option("--limit <count>", "Page size, 1–100", limitParser(100))
     .option("--json", "output machine-readable JSON")
     .action(
       async (options: {
@@ -1741,7 +1796,7 @@ export async function runCli(
     .option("--desc", "Descending order")
     .option("--changed-since <time>", "Only entries changed since an ISO time")
     .option("--cursor <cursor>", "Continue listing")
-    .option("--limit <count>", "Page size, 1–50")
+    .option("--limit <count>", "Page size, 1–50", limitParser(50))
     .option("--json", "output machine-readable JSON")
     .action(
       async (
@@ -1780,7 +1835,7 @@ export async function runCli(
     .command("activity <entry>")
     .description("List an entry's retained changes, newest first")
     .option("--before <position>", "Continue listing")
-    .option("--limit <count>", "Page size, 1–100")
+    .option("--limit <count>", "Page size, 1–100", limitParser(100))
     .option("--json", "output machine-readable JSON")
     .action(
       async (
@@ -1870,6 +1925,13 @@ export async function runCli(
           ? folders.command("delete <entry>")
           : files.command("organize <entry>");
     command
+      .description(
+        action === "create_folder"
+          ? "Create a shared folder"
+          : action === "delete_folder"
+            ? "Delete an empty shared folder"
+            : "Move or rename a file or folder",
+      )
       .requiredOption(
         "--operation <path>",
         "Private immutable operation receipt",
@@ -2004,14 +2066,14 @@ export async function runCli(
       });
   const mail = program
     .command("mail")
-    .description(
-      "Discover mailboxes and send explicitly requested plain-text mail",
-    );
+    .description("Read, send, organize and export Mailbox correspondence");
   for (const action of ["block-sender", "unblock-sender"] as const) {
     mail
       .command(`${action} <sender>`)
       .description(
-        "Set an exact From-address rule for future Mailbox retention",
+        action === "block-sender"
+          ? "Stop retaining future mail from an exact From address"
+          : "Retain future mail from a blocked From address again",
       )
       .option("--mailbox <id>", "Explicitly select an authorized Mailbox")
       .option("--json", "output machine-readable JSON")
@@ -2040,7 +2102,7 @@ export async function runCli(
     .description("List current exact-address sender blocks")
     .option("--mailbox <id>", "Explicitly select an authorized Mailbox")
     .option("--after <cursor>", "Continue this live listing")
-    .option("--limit <count>", "Page size, 1–100")
+    .option("--limit <count>", "Page size, 1–100", limitParser(100))
     .option("--json", "output machine-readable JSON")
     .action(
       async (options: {
@@ -2070,7 +2132,7 @@ export async function runCli(
     )
     .option("--mailbox <id>", "Explicitly select an authorized Mailbox")
     .option("--after <cursor>", "Continue this listing")
-    .option("--limit <count>", "Page size, 1–100")
+    .option("--limit <count>", "Page size, 1–100", limitParser(100))
     .addOption(
       new Option("--view <view>", "Correspondence view").choices([
         "active",
@@ -2179,9 +2241,7 @@ export async function runCli(
     .description("Read one bounded change page; a gap requires a new baseline")
     .requiredOption("--mailbox <id>", "Authorized Mailbox bound to the cursor")
     .requiredOption("--cursor <cursor>", "Saved checkpoint or continuation")
-    .option("--limit <count>", "Changes per page (1–100)", (value) =>
-      Number(value),
-    )
+    .option("--limit <count>", "Changes per page (1–100)", limitParser(100))
     .option("--json", "output machine-readable JSON")
     .action(
       async (commandOptions: {
@@ -2209,9 +2269,7 @@ export async function runCli(
     )
     .requiredOption("--mailbox <id>", "Authorized Mailbox")
     .option("--after <id>", "Continue operation discovery")
-    .option("--limit <count>", "Operations per page (1–100)", (value) =>
-      Number(value),
-    )
+    .option("--limit <count>", "Operations per page (1–100)", limitParser(100))
     .option("--json", "output machine-readable JSON")
     .action(
       async (commandOptions: {
@@ -2242,7 +2300,7 @@ export async function runCli(
     .option(
       "--limit <count>",
       "Candidates inspected per page (1–100)",
-      (value) => Number(value),
+      limitParser(100),
     )
     .option("--json", "output machine-readable JSON")
     .action(
@@ -2395,7 +2453,7 @@ export async function runCli(
     .option(
       "--limit <count>",
       "Candidates inspected per page (1–100)",
-      (value) => Number(value),
+      limitParser(100),
     )
     .option("--json", "output machine-readable JSON")
     .action(
@@ -2435,7 +2493,8 @@ export async function runCli(
           archive: "Archive retained content without stopping sending",
           unarchive: "Return archived content to the active view",
           trash: "Trash content and stop further sending submissions",
-          restore: "Restore unexpired content without resuming sending",
+          restore:
+            "Take unexpired content out of trash without resuming sending",
           purge:
             "Permanently remove trashed content (owner/admin only); no provider recall",
         }[action],
@@ -2469,7 +2528,7 @@ export async function runCli(
     )
     .option("--mailbox <id>", "Explicitly select an authorized Mailbox")
     .option("--after <cursor>", "Continue this listing")
-    .option("--limit <count>", "Page size, 1–100")
+    .option("--limit <count>", "Page size, 1–100", limitParser(100))
     .option("--json", "output machine-readable JSON")
     .action(
       async (commandOptions: {
@@ -2501,7 +2560,7 @@ export async function runCli(
     )
     .option("--mailbox <id>", "Explicitly select an authorized Mailbox")
     .option("--after <cursor>", "Continue this listing")
-    .option("--limit <count>", "Page size, 1–100")
+    .option("--limit <count>", "Page size, 1–100", limitParser(100))
     .option("--json", "output machine-readable JSON")
     .action(
       async (commandOptions: {
@@ -2592,7 +2651,13 @@ export async function runCli(
     const command = mail
       .command(kind.replace("_", "-"))
       .description(
-        "Compose or retry retained plain-text correspondence using a private immutable receipt",
+        {
+          reply:
+            "Reply to the sender of a retained message, or retry the reply",
+          reply_all:
+            "Reply to all recipients of a retained message, or retry the reply",
+          forward: "Forward a retained message, or retry the forward",
+        }[kind],
       )
       .requiredOption(
         "--operation <path>",
@@ -2672,6 +2737,7 @@ export async function runCli(
     });
   mail
     .command("address")
+    .description("Show your Mailbox address, or another authorized Mailbox's")
     .option("--mailbox <id>", "Read a specific authorized mailbox")
     .option("--json", "output machine-readable JSON")
     .action(async (commandOptions: { mailbox?: string; json?: boolean }) => {
@@ -2688,8 +2754,9 @@ export async function runCli(
     });
   mail
     .command("mailboxes")
+    .description("List the workplace's Mailbox addresses")
     .option("--after <id>", "Page after a mailbox ID")
-    .option("--limit <count>", "Page size, 1–100")
+    .option("--limit <count>", "Page size, 1–100", limitParser(100))
     .option("--json", "output machine-readable JSON")
     .action(
       async (commandOptions: {
@@ -2726,6 +2793,7 @@ export async function runCli(
     .option(
       "--mailbox-name <label>",
       "Optional permanent exact mailbox name; otherwise allocate a readable default",
+      mailboxNameParser,
     )
     .option(
       "--mailbox-default",
@@ -2754,7 +2822,9 @@ export async function runCli(
     );
   program
     .command("status")
-    .description("Return to the saved workplace")
+    .description(
+      "Return to a workplace created by signup; other accounts use account-status",
+    )
     .option("--json", "output machine-readable JSON")
     .action(async (commandOptions: JsonOptions) => {
       try {

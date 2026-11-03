@@ -235,7 +235,9 @@ describe("agent-workplace CLI", () => {
 
     expect(result.exitCode).toBe(1);
     expect(result.stdout).toBe("");
-    expect(result.stderr).toContain("error: unknown command 'health'");
+    const { error } = JSON.parse(result.stderr);
+    expect(error.code).toBe("usage");
+    expect(error.message).toContain("unknown command 'health'");
   });
 
   it("uses Commander syntax errors", async () => {
