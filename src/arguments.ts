@@ -1,4 +1,4 @@
-import { type Command, InvalidArgumentError } from "commander";
+import { type Command, InvalidArgumentError, Option } from "commander";
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -12,6 +12,16 @@ export function limitParser(maximum: number) {
       );
     return limit;
   };
+}
+
+/** `--wait [seconds]`: a whole number of seconds from 1 to 3600. */
+export function waitParser(value: string) {
+  const seconds = Number(value);
+  if (!/^\d+$/.test(value) || seconds < 1 || seconds > 3600)
+    throw new InvalidArgumentError(
+      "Use a whole number of seconds from 1 to 3600.",
+    );
+  return seconds;
 }
 
 /** Mailbox names are saved with signup state, so reject overlong ones first. */
@@ -90,4 +100,66 @@ export function validateIdentifiers(command: Command) {
       if (!uuid.test(value))
         invalid(command, `command-argument <${name}> value`, value);
   });
+}
+
+// Hidden older spellings, keyed to the long flag of their canonical option.
+const aliasOf = new WeakMap<Option, string>();
+const requiredCanonical = new WeakSet<Option>();
+
+/** A canonical option, marked `(required)` in help when `required`. */
+export function canonicalOption(
+  flags: string,
+  description: string,
+  required = false,
+) {
+  const option = new Option(
+    flags,
+    required ? `${description} (required)` : description,
+  );
+  if (required) requiredCanonical.add(option);
+  return option;
+}
+
+/** An older spelling kept working but hidden from help. */
+export function hiddenAlias(flags: string, canonicalFlag: string) {
+  const option = new Option(flags).hideHelp();
+  aliasOf.set(option, canonicalFlag);
+  return option;
+}
+
+/**
+ * Fold each older spelling into one value under the attribute the command's
+ * action reads, rejecting conflicting values and a missing required value.
+ */
+export function resolveAliases(command: Command) {
+  const values = command.opts<Record<string, unknown>>();
+  for (const alias of command.options) {
+    const canonicalFlag = aliasOf.get(alias);
+    if (!canonicalFlag) continue;
+    const canonical = command.options.find(
+      (option) => option.long === canonicalFlag,
+    );
+    if (!canonical) continue;
+    const preferred = values[canonical.attributeName()];
+    const older = values[alias.attributeName()];
+    if (
+      preferred !== undefined &&
+      older !== undefined &&
+      JSON.stringify(preferred) !== JSON.stringify(older)
+    )
+      command.error(
+        `error: options '${canonical.flags}' and '${alias.flags}' name different values; use '${canonical.long}'`,
+        { code: "commander.conflictingOption", exitCode: 1 },
+      );
+    const value = preferred ?? older;
+    if (value === undefined && requiredCanonical.has(canonical))
+      command.error(
+        `error: required option '${canonical.flags}' not specified`,
+        {
+          code: "commander.missingMandatoryOptionValue",
+          exitCode: 1,
+        },
+      );
+    command.setOptionValue(alias.attributeName(), value);
+  }
 }

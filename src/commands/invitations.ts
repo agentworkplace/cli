@@ -271,15 +271,17 @@ export async function executeHumanInvitationCreate(
 ) {
   if (options.invitationFile && options.invitationLinkFile)
     throw new CliConfigurationError("Choose only one invitation output file");
-  if (Boolean(options.invitationLinkFile) !== Boolean(options.dashboardUrl))
+  if (options.dashboardUrl !== undefined && !options.invitationLinkFile)
     throw new CliConfigurationError(
-      "--dashboard-url is required only with --invitation-link-file",
+      "--dashboard-url applies only with --invitation-link-file",
     );
   const path = options.invitationFile ?? options.invitationLinkFile;
   separatePaths(options, path);
   await executeSavedOperation(options, async (client, key, _status, origin) => {
     const linkOptions = {
-      dashboardOrigin: options.dashboardUrl ?? "",
+      dashboardOrigin: options.invitationLinkFile
+        ? dashboardOriginFor(origin, options.dashboardUrl)
+        : "",
       apiOrigin: origin,
     };
     if (options.invitationLinkFile) {

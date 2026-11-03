@@ -1,5 +1,44 @@
 # agent-workplace
 
+## 0.11.0
+
+### Minor Changes
+
+- Shorten common Files commands:
+
+  - `files get` accepts a bare file ID in your workplace as well as an `awp:file:`
+    reference.
+  - `files put` and `files text` take `--wait [seconds]` (300 by default) to wait for a
+    pending upload to publish, exiting nonzero if it is still pending. Without
+    `--wait`, default output names the `files status` command for a pending upload on
+    stderr; `--json` output is unchanged.
+  - `files copy`, `organize`, `folders create`/`delete`, `trash`, `restore-trash`,
+    `restore`, `purge` and `clear-history` retry with only `--operation`, reusing the
+    saved request. Their file or entry argument and request options are now optional
+    when the operation file already exists; a new operation still requires them.
+
+- Shorten common Mail, Chat and account commands:
+
+  - `mail reply` and `reply-all` default `--subject` to `Re:` and `mail forward` to
+    `Fwd:` before the source subject, unless it already starts with one. The subject
+    is saved with the operation, so retries are unchanged.
+  - `mail send`, `reply`, `reply-all` and `forward` accept `--body-file -`, and
+    `chat post` accepts `--text-file -`, to read the text from stdin.
+  - `role show` reads your own role when `--account` is omitted.
+  - `invitations create-human --invitation-link-file` defaults `--dashboard-url` for
+    production, like `invitations create`.
+
+- Use one option spelling per meaning:
+
+  - `--account <id>` now selects the target account for `keys`, `grants`,
+    `revoke-grant`, `rename-key`, `revoke-key`, `create-key`, `recover-keys` and
+    `remove-account`, as it already did elsewhere.
+  - Chat's JSON request input is `--request-file`, since `--file` names a file ID in the
+    Files commands.
+
+  The earlier `--account-id` and Chat `--file` spellings keep working and are hidden from
+  help. Passing both spellings with different values is a usage error.
+
 ## 0.10.2
 
 ### Patch Changes
