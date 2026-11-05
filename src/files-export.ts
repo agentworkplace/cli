@@ -18,7 +18,7 @@ import {
 } from "@agent-workplace/sdk";
 import { accessOrigin } from "./credentials.js";
 import { CliConfigurationError, presentError } from "./errors.js";
-import { withPrivateJsonFile } from "./private-file.js";
+import { canonicalFilePath, withPrivateJsonFile } from "./private-file.js";
 import { downloadFileLocally } from "./files-download.js";
 
 type Identity = { dev: string; ino: string };
@@ -125,24 +125,6 @@ async function named(path: string, id: Identity, directory: boolean) {
   const s = await lstat(path, { bigint: true });
   privateStat(s, directory);
   if (!same(s, id)) throw fail();
-}
-async function canonicalOperation(path: string) {
-  const absolute = resolve(path),
-    missing: string[] = [];
-  let parent = dirname(absolute);
-  for (;;) {
-    try {
-      return join(await realpath(parent), ...missing, basename(absolute));
-    } catch (error) {
-      if (
-        (error as NodeJS.ErrnoException).code !== "ENOENT" ||
-        parent === dirname(parent)
-      )
-        throw error;
-      missing.unshift(basename(parent));
-      parent = dirname(parent);
-    }
-  }
 }
 async function syncDirectory(path: string) {
   const h = await open(
@@ -267,7 +249,7 @@ export async function exportFilesLocally(
       await realpath(dirname(resolve(input.output))),
       basename(resolve(input.output)),
     ),
-    operation = await canonicalOperation(input.operation);
+    operation = await canonicalFilePath(input.operation);
   const relation = relative(output, operation);
   if (
     relation === "" ||

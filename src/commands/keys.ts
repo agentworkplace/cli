@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { AgentWorkplaceError, type AgentWorkplace } from "@agent-workplace/sdk";
 import { productClient } from "../client.js";
 import {
   accessOrigin,
@@ -37,7 +38,48 @@ export async function executeKeyRotation(
         "Resume the unfinished rotation using its original name",
       );
     const client = productClient(options, origin);
-    const status = await client.accountStatus({ apiKey: state.credential.key });
+    /** A refused rotation can leave this file holding a dead key. Go back to the
+     * previous key only once it proves the candidate is really gone: a 401 can be
+     * a passing fault, and the candidate may be the only live key. */
+    const abandoned = async (error: unknown) => {
+      if (!(error instanceof AgentWorkplaceError) || !state?.credential)
+        return error;
+      const rotation = state.rotation;
+      const refused = error.code === "rotation_conflict";
+      let key = state.credential.key;
+      if (rotation?.phase === "saved") {
+        const { predecessorKey, candidateId } = rotation;
+        if (
+          !predecessorKey ||
+          !candidateId ||
+          (!refused && error.code !== "access_denied")
+        )
+          return error;
+        const keys = await client
+          .listAgentKeys({ apiKey: predecessorKey }, state.credential.accountId)
+          .catch(() => undefined);
+        const unconfirmed =
+          !keys ||
+          keys.keys.some((item) => item.id === candidateId && item.enabled);
+        // A refused completion came from the candidate, so it works even though
+        // its handoff is over: keep it, and let rotation start again from it.
+        if (unconfirmed && !refused) return error;
+        if (!unconfirmed) key = predecessorKey;
+      } else if (!refused) return error;
+      await store.write(
+        completedCredentialState(state, { ...state.credential, key }),
+      );
+      return new CliConfigurationError(
+        "The unfinished rotation was cancelled; run rotate-key again",
+      );
+    };
+    const status = await client
+      .accountStatus({ apiKey: state.credential.key })
+      .catch(async (error: unknown) => {
+        throw state?.rotation?.phase === "saved"
+          ? await abandoned(error)
+          : error;
+      });
     if (
       status.accountId !== state.credential.accountId ||
       status.workplaceId !== state.credential.workplaceId
@@ -54,11 +96,15 @@ export async function executeKeyRotation(
     }
     const rotation = state.rotation!;
     if (rotation.phase === "issuing") {
-      const candidate = await client.beginKeyRotation(
-        state.credential!.key,
-        rotation.operationId,
-        rotation.name,
-      );
+      const candidate = await client
+        .beginKeyRotation(
+          state.credential!.key,
+          rotation.operationId,
+          rotation.name,
+        )
+        .catch(async (error: unknown) => {
+          throw await abandoned(error);
+        });
       if (candidate.operationId !== rotation.operationId)
         throw new CliConfigurationError(
           "Rotation response does not match the saved operation",
@@ -66,15 +112,21 @@ export async function executeKeyRotation(
       state = {
         ...state,
         credential: { ...state.credential!, key: candidate.key },
-        rotation: { ...rotation, phase: "saved" },
+        rotation: {
+          ...rotation,
+          phase: "saved",
+          predecessorKey: state.credential!.key,
+          candidateId: candidate.id,
+        },
       };
       // If this fails, no finalization request is made and the predecessor stays valid.
       await store.write(state);
     }
-    await client.completeKeyRotation(
-      state.credential!.key,
-      rotation.operationId,
-    );
+    await client
+      .completeKeyRotation(state.credential!.key, rotation.operationId)
+      .catch(async (error: unknown) => {
+        throw await abandoned(error);
+      });
     state = completedCredentialState(state, state.credential!);
     await store.write(state);
     const result = { rotated: true, accountId: state.credential!.accountId };
@@ -148,6 +200,43 @@ export async function executeGrantRevoke(
   );
 }
 
+/**
+ * Revoke-all on your own account must not depend on the response that returns
+ * the replacement. Save a new key first, then revoke everything else with it:
+ * until then the old key works, and a rerun simply replaces the new key too.
+ */
+async function recoverOwnKeys(
+  client: AgentWorkplace,
+  saved: CredentialState,
+  destination: { write(state: CredentialState): Promise<void> },
+  options: { name: string; write(result: object): void },
+) {
+  const credential = saved.credential!;
+  const { accountId } = credential;
+  const issue = () =>
+    client.createAgentKey({ apiKey: credential.key }, accountId, options.name);
+  // At the key limit there is no room for a replacement. The other keys are
+  // going anyway, and revoking them keeps this key, so no step risks lockout.
+  const key = await issue().catch(async (error: unknown) => {
+    if (!(error instanceof AgentWorkplaceError) || error.code !== "key_limit")
+      throw error;
+    await client.recoverAgentKeysExceptCurrent(credential.key, accountId);
+    return issue();
+  });
+  const replacement = { ...credential, key: key.key };
+  await destination.write(completedCredentialState(saved, replacement));
+  const result = await client.recoverAgentKeysExceptCurrent(
+    replacement.key,
+    accountId,
+  );
+  options.write({
+    accountId,
+    keyId: result.id,
+    saved: true,
+    recovered: true,
+  });
+}
+
 export async function executeKeyIssue(
   options: AccessCommandOptions & {
     accountId?: string;
@@ -199,6 +288,12 @@ export async function executeKeyIssue(
       write(state: CredentialState): Promise<void>;
     }) => {
       const previous = await destination.read();
+      // Replacing a saved key here would leave it live with no local copy;
+      // recovery may, because recovery has already revoked it.
+      if (previous && !recovery)
+        throw new CliConfigurationError(
+          "Destination already holds a credential; choose a new --save-to path, or use rotate-key to replace this key",
+        );
       if (
         previous &&
         (previous.origin !== saved.origin ||
@@ -209,6 +304,16 @@ export async function executeKeyIssue(
           "Destination belongs to another account or unfinished handoff",
         );
       const authorization = { apiKey: saved.credential!.key };
+      if (recovery && accountId === saved.credential!.accountId) {
+        await recoverOwnKeys(client, saved, destination, {
+          name: options.name,
+          write: (result) =>
+            options.write(
+              `${JSON.stringify(result, null, options.json ? undefined : 2)}\n`,
+            ),
+        });
+        return;
+      }
       const key = recovery
         ? await client.recoverAgentKeys(authorization, accountId, options.name)
         : await client.createAgentKey(authorization, accountId, options.name);

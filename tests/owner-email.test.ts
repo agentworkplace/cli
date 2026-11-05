@@ -101,7 +101,7 @@ test.each([
   expect(result.request).not.toHaveBeenCalled();
   expect(result.createProductClient).not.toHaveBeenCalled();
   expect(result.stderr).toBe(
-    '{"error":{"message":"Expected a private owner email receipt for the selected API origin; set AGENT_WORKPLACE_API_URL for another environment"}}\n',
+    '{"error":{"message":"Expected a private owner email receipt for the selected API origin; set AGENT_WORKPLACE_API_URL for another environment","code":"cli_error"}}\n',
   );
 });
 test("receipt cannot select non-loopback HTTP and failures never echo its secret", async () => {
@@ -116,7 +116,7 @@ test("receipt cannot select non-loopback HTTP and failures never echo its secret
   const failed = await invoke("-", JSON.stringify(receipt), origin, true, true);
   expect(failed.stdout).toBe("");
   expect(failed.stderr).toBe(
-    '{"error":{"message":"Unable to complete the request"}}\n',
+    '{"error":{"message":"Unable to complete the request","code":"unexpected"}}\n',
   );
 });
 test("production receipt uses the default and a staging receipt cannot redirect it", async () => {
@@ -193,7 +193,7 @@ test("bound receipt rejects a different returned operation", async () => {
   expect(result.exitCode).toBe(1);
   expect(result.stdout).toBe("");
   expect(result.stderr).toBe(
-    '{"error":{"message":"Owner email status does not match the saved operation"}}\n',
+    '{"error":{"message":"Owner email status does not match the saved operation","code":"cli_error"}}\n',
   );
 });
 

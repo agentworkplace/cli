@@ -4,9 +4,10 @@ import * as fs from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { AgentWorkplace } from "@agent-workplace/sdk";
+import { AgentWorkplace, AgentWorkplaceError } from "@agent-workplace/sdk";
 import { withCredentials, type CredentialState } from "../src/credentials.js";
 import { executeKeyRotation, executeKeyIssue } from "../src/commands/keys.js";
+import { executeSignup } from "../src/commands/access.js";
 vi.mock("node:fs/promises", { spy: true });
 const realFs =
   await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises");
@@ -185,5 +186,385 @@ describe("private CLI rotation handoff", () => {
       ),
     ).rejects.toThrow("separate credential destination");
     expect(recovery).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses to replace a saved key and never issues one", async () => {
+    const f = await fixture(true);
+    vi.spyOn(AgentWorkplace.prototype, "listParticipants").mockResolvedValue({
+      participants: [
+        {
+          id: f.state.credential!.accountId,
+          name: "Agent",
+          kind: "agent",
+          role: "admin",
+          state: "active",
+          departureKind: null,
+          departedAt: null,
+        },
+      ],
+    });
+    const create = vi.spyOn(AgentWorkplace.prototype, "createAgentKey");
+    const saveTo = `${f.file}.existing`;
+    await withCredentials(saveTo, (store) => store.write(f.state));
+
+    for (const destination of [saveTo, f.file])
+      await expect(
+        executeKeyIssue({ ...f.options, saveTo: destination }, false),
+      ).rejects.toThrow("Destination already holds a credential");
+
+    expect(create).not.toHaveBeenCalled();
+    expect(JSON.parse(await readFile(saveTo, "utf8")).credential.key).toBe(
+      "old-secret",
+    );
+  });
+
+  it("creates a key in a new destination", async () => {
+    const f = await fixture(true);
+    vi.spyOn(AgentWorkplace.prototype, "listParticipants").mockResolvedValue({
+      participants: [
+        {
+          id: f.state.credential!.accountId,
+          name: "Agent",
+          kind: "agent",
+          role: "admin",
+          state: "active",
+          departureKind: null,
+          departedAt: null,
+        },
+      ],
+    });
+    vi.spyOn(AgentWorkplace.prototype, "createAgentKey").mockResolvedValue({
+      id: randomUUID(),
+      key: "second-secret",
+    });
+    const saveTo = `${f.file}.new`;
+    await executeKeyIssue({ ...f.options, saveTo }, false);
+    expect(JSON.parse(await readFile(saveTo, "utf8")).credential.key).toBe(
+      "second-secret",
+    );
+  });
+});
+
+function selfRecovery(f: Awaited<ReturnType<typeof fixture>>) {
+  const keyId = randomUUID();
+  vi.spyOn(AgentWorkplace.prototype, "listParticipants").mockResolvedValue({
+    participants: [
+      {
+        id: f.state.credential!.accountId,
+        name: "Agent",
+        kind: "agent",
+        role: "admin",
+        state: "active",
+        departureKind: null,
+        departedAt: null,
+      },
+    ],
+  });
+  const create = vi
+    .spyOn(AgentWorkplace.prototype, "createAgentKey")
+    .mockResolvedValue({ id: keyId, key: "replacement-secret" });
+  const recover = vi
+    .spyOn(AgentWorkplace.prototype, "recoverAgentKeysExceptCurrent")
+    .mockResolvedValue({ recovered: true, id: keyId });
+  const revokeAll = vi.spyOn(AgentWorkplace.prototype, "recoverAgentKeys");
+  const saved = async () =>
+    JSON.parse(await readFile(f.file, "utf8")) as CredentialState;
+  return { create, recover, revokeAll, saved };
+}
+
+describe("self-recovery", () => {
+  it.each([false, true])(
+    "saves the replacement, then revokes the rest with it (general=%s)",
+    async (general) => {
+      const f = await fixture(general);
+      const r = selfRecovery(f);
+      r.recover.mockImplementation(async () => {
+        expect((await r.saved()).credential?.key).toBe("replacement-secret");
+        return { recovered: true, id: randomUUID() };
+      });
+      await executeKeyIssue({ ...f.options, saveTo: f.file }, true);
+      expect(r.recover).toHaveBeenCalledWith(
+        "replacement-secret",
+        f.state.credential!.accountId,
+      );
+      expect(r.revokeAll).not.toHaveBeenCalled();
+      const state = await r.saved();
+      expect(state.credential?.key).toBe("replacement-secret");
+      expect(f.options.write.mock.calls.flat().join("")).not.toContain(
+        "replacement-secret",
+      );
+    },
+  );
+
+  it("keeps the old key when the replacement can't be saved", async () => {
+    const f = await fixture(true);
+    const r = selfRecovery(f);
+    vi.mocked(fs.rename).mockRejectedValueOnce(new Error("Disk full"));
+    await expect(
+      executeKeyIssue({ ...f.options, saveTo: f.file }, true),
+    ).rejects.toThrow("Disk full");
+    expect(r.recover).not.toHaveBeenCalled();
+    expect((await r.saved()).credential?.key).toBe("old-secret");
+  });
+
+  it("replaces the saved key on a rerun after a lost response", async () => {
+    const f = await fixture(true);
+    const r = selfRecovery(f);
+    r.recover.mockRejectedValueOnce(new Error("Lost response"));
+    await expect(
+      executeKeyIssue({ ...f.options, saveTo: f.file }, true),
+    ).rejects.toThrow("Lost response");
+    expect((await r.saved()).credential?.key).toBe("replacement-secret");
+    r.create.mockResolvedValueOnce({ id: randomUUID(), key: "second-secret" });
+    await executeKeyIssue({ ...f.options, saveTo: f.file }, true);
+    expect(r.create).toHaveBeenCalledTimes(2);
+    expect(r.create.mock.calls[1]![0]).toEqual({
+      apiKey: "replacement-secret",
+    });
+    expect((await r.saved()).credential?.key).toBe("second-secret");
+    expect(r.recover).toHaveBeenLastCalledWith(
+      "second-secret",
+      f.state.credential!.accountId,
+    );
+  });
+
+  it("frees slots with the current key at the key limit", async () => {
+    const f = await fixture(true);
+    const r = selfRecovery(f);
+    r.create.mockRejectedValueOnce(
+      new AgentWorkplaceError("Key limit", { status: 409, code: "key_limit" }),
+    );
+    await executeKeyIssue({ ...f.options, saveTo: f.file }, true);
+    expect(r.recover.mock.calls.map((call) => call[0])).toEqual([
+      "old-secret",
+      "replacement-secret",
+    ]);
+    expect(r.create).toHaveBeenCalledTimes(2);
+    expect((await r.saved()).credential?.key).toBe("replacement-secret");
+  });
+
+  it("still replaces another account's keys in one call", async () => {
+    const f = await fixture(true);
+    const r = selfRecovery(f);
+    const targetId = randomUUID();
+    vi.mocked(AgentWorkplace.prototype.listParticipants).mockResolvedValue({
+      participants: [
+        {
+          id: targetId,
+          name: "Target",
+          kind: "agent",
+          role: "member",
+          state: "active",
+          departureKind: null,
+          departedAt: null,
+        },
+      ],
+    });
+    r.revokeAll.mockResolvedValue({ id: randomUUID(), key: "target-secret" });
+    await executeKeyIssue(
+      {
+        ...f.options,
+        accountId: targetId,
+        saveTo: join(f.file + ".private", "target.json"),
+      },
+      true,
+    );
+    expect(r.revokeAll).toHaveBeenCalledOnce();
+    expect(r.create).not.toHaveBeenCalled();
+  });
+});
+
+describe("cancelled rotations", () => {
+  const conflict = () =>
+    new AgentWorkplaceError("Rotation conflict", {
+      status: 409,
+      code: "rotation_conflict",
+    });
+  const read = async (file: string) =>
+    JSON.parse(await readFile(file, "utf8")) as CredentialState;
+
+  /** What the previous key sees when it lists its account's keys. */
+  const candidateEnabled = (
+    enabled: boolean,
+    f: Awaited<ReturnType<typeof fixture>>,
+  ) =>
+    vi
+      .spyOn(AgentWorkplace.prototype, "listAgentKeys")
+      .mockImplementation(async () => {
+        const issued = await f.begin.mock.results[0]!.value;
+        return {
+          keys: [
+            {
+              id: issued.id,
+              name: "Rotation",
+              enabled,
+              createdAt: "2026-11-05T00:00:00.000Z",
+              expiresAt: null,
+            },
+          ],
+        };
+      });
+
+  it("restores the previous key when finalization is refused", async () => {
+    const f = await fixture(true);
+    const list = candidateEnabled(false, f);
+    f.complete.mockRejectedValueOnce(conflict());
+    await expect(executeKeyRotation(f.options)).rejects.toThrow(
+      "run rotate-key again",
+    );
+    const state = await read(f.file);
+    expect(state.credential?.key).toBe("old-secret");
+    expect(state.rotation).toBeUndefined();
+    expect(list).toHaveBeenCalledWith(
+      { apiKey: "old-secret" },
+      f.state.credential!.accountId,
+    );
+  });
+
+  it("restores the previous key when the saved candidate was revoked", async () => {
+    const f = await fixture(true);
+    candidateEnabled(false, f);
+    f.complete.mockRejectedValueOnce(new Error("Lost response"));
+    await expect(executeKeyRotation(f.options)).rejects.toThrow(
+      "Lost response",
+    );
+    f.status.mockRejectedValueOnce(
+      new AgentWorkplaceError("Rejected", {
+        status: 401,
+        code: "access_denied",
+      }),
+    );
+    await expect(executeKeyRotation(f.options)).rejects.toThrow(
+      "run rotate-key again",
+    );
+    expect((await read(f.file)).credential?.key).toBe("old-secret");
+  });
+
+  it.each([
+    ["the candidate is still enabled", true, "access_denied"],
+    ["the error isn't a refused key", false, "unavailable"],
+  ])("keeps the candidate when %s", async (_name, enabled, code) => {
+    const f = await fixture(true);
+    candidateEnabled(enabled, f);
+    f.complete.mockRejectedValueOnce(new Error("Lost response"));
+    await expect(executeKeyRotation(f.options)).rejects.toThrow(
+      "Lost response",
+    );
+    f.status.mockRejectedValueOnce(
+      new AgentWorkplaceError("Rejected", { status: 401, code }),
+    );
+    await expect(executeKeyRotation(f.options)).rejects.toThrow("Rejected");
+    const state = await read(f.file);
+    expect(state.credential?.key).toBe("new-secret");
+    expect(state.rotation?.phase).toBe("saved");
+  });
+
+  it("keeps a working candidate when its handoff is over and the previous key is gone", async () => {
+    const f = await fixture(true);
+    vi.spyOn(AgentWorkplace.prototype, "listAgentKeys").mockRejectedValue(
+      new AgentWorkplaceError("Rejected", {
+        status: 401,
+        code: "access_denied",
+      }),
+    );
+    f.complete.mockRejectedValueOnce(conflict());
+    await expect(executeKeyRotation(f.options)).rejects.toThrow(
+      "run rotate-key again",
+    );
+    const state = await read(f.file);
+    expect(state.credential?.key).toBe("new-secret");
+    expect(state.rotation).toBeUndefined();
+  });
+
+  it("keeps the rotation when a passing 401 can't be confirmed", async () => {
+    const f = await fixture(true);
+    vi.spyOn(AgentWorkplace.prototype, "listAgentKeys").mockRejectedValue(
+      new Error("Lost response"),
+    );
+    f.complete.mockRejectedValueOnce(new Error("Lost response"));
+    await expect(executeKeyRotation(f.options)).rejects.toThrow(
+      "Lost response",
+    );
+    f.status.mockRejectedValueOnce(
+      new AgentWorkplaceError("Rejected", {
+        status: 401,
+        code: "access_denied",
+      }),
+    );
+    await expect(executeKeyRotation(f.options)).rejects.toThrow("Rejected");
+    const state = await read(f.file);
+    expect(state.credential?.key).toBe("new-secret");
+    expect(state.rotation?.phase).toBe("saved");
+  });
+
+  it("clears a refused issuance so a rerun starts a fresh operation", async () => {
+    const f = await fixture(true);
+    f.begin.mockRejectedValueOnce(conflict());
+    await expect(executeKeyRotation(f.options)).rejects.toThrow(
+      "run rotate-key again",
+    );
+    expect((await read(f.file)).rotation).toBeUndefined();
+    await executeKeyRotation(f.options);
+    expect(f.begin.mock.calls[0]![1]).not.toBe(f.begin.mock.calls[1]![1]);
+    expect((await read(f.file)).credential?.key).toBe("new-secret");
+  });
+
+  it("keeps a lost finalization resumable", async () => {
+    const f = await fixture(true);
+    f.complete.mockRejectedValueOnce(new Error("Lost response"));
+    await expect(executeKeyRotation(f.options)).rejects.toThrow(
+      "Lost response",
+    );
+    const state = await read(f.file);
+    expect(state.rotation?.phase).toBe("saved");
+    expect(state.rotation?.predecessorKey).toBe("old-secret");
+  });
+
+  it("keeps unfinished rotation state when signup runs again", async () => {
+    const f = await fixture();
+    const rotation = {
+      operationId: randomUUID(),
+      name: "Rotation",
+      phase: "saved" as const,
+      predecessorKey: "older-secret",
+    };
+    await withCredentials(f.file, (store) =>
+      store.write({ ...f.state, rotation }),
+    );
+    vi.spyOn(AgentWorkplace.prototype, "acknowledgeSignup").mockResolvedValue(
+      undefined as never,
+    );
+    vi.spyOn(AgentWorkplace.prototype, "accessStatus").mockRejectedValue(
+      new Error("Stop after the local write"),
+    );
+    await expect(
+      executeSignup({
+        credentials: f.file,
+        baseUrl: f.state.origin,
+        name: "Agent",
+        ownerEmail: "owner@example.test",
+        json: true,
+        write: vi.fn(),
+      }),
+    ).rejects.toThrow("Stop after the local write");
+    expect((await read(f.file)).rotation).toEqual(rotation);
+  });
+
+  it("reads a file saved before predecessor keys were kept", async () => {
+    const f = await fixture(true);
+    await withCredentials(f.file, (store) =>
+      store.write({
+        ...f.state,
+        credential: { ...f.state.credential!, key: "new-secret" },
+        rotation: {
+          operationId: randomUUID(),
+          name: "Rotation",
+          phase: "saved",
+        },
+      }),
+    );
+    await executeKeyRotation(f.options);
+    expect(f.complete).toHaveBeenCalledOnce();
+    expect((await read(f.file)).rotation).toBeUndefined();
   });
 });

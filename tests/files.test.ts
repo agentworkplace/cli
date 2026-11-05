@@ -175,9 +175,9 @@ test("update version option dispatches instead of invoking the global version fl
     "--expected-version",
     version,
   ]);
-  expect(result.code).toBe(0);
-  expect(result.stderr).toBe("");
+  expect(result.code).toBe(1);
   expect(JSON.parse(result.stdout).state).toBe("conflict");
+  expect(JSON.parse(result.stderr).error.code).toBe("operation_not_completed");
   expect(send.mock.calls[0]![1].target).toEqual({ fileId, version });
 });
 

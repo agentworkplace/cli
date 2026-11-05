@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import {
   mkdtemp,
+  readdir,
   rm,
   readFile,
   writeFile,
@@ -12,7 +13,11 @@ import {
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, expect, test, vi } from "vitest";
-import { AgentWorkplace, type FileMetadata } from "@agent-workplace/sdk";
+import {
+  AgentWorkplace,
+  AgentWorkplaceError,
+  type FileMetadata,
+} from "@agent-workplace/sdk";
 import { downloadFileLocally } from "../src/files-download.js";
 const directories: string[] = [];
 afterEach(async () => {
@@ -47,6 +52,7 @@ async function fixture() {
   const state = {
     interrupt: true,
     denied: false,
+    stall: undefined as (() => void) | undefined,
     ranges: [] as string[],
     pins: [] as (string | null)[],
   };
@@ -78,6 +84,14 @@ async function fixture() {
       const start = Number(match[1]),
         end = Number(match[2]);
       if (state.interrupt && start > 0) throw new Error("fixture interruption");
+      if (state.stall && start > 0) {
+        state.stall();
+        await new Promise((_resolve, reject) =>
+          init!.signal!.addEventListener("abort", () =>
+            reject(init!.signal!.reason),
+          ),
+        );
+      }
       return new Response(bytes.subarray(start, end + 1), {
         status: 206,
         headers: { "content-range": `bytes ${start}-${end}/${bytes.length}` },
@@ -160,6 +174,73 @@ test.each(["verified", "complete"])(
     await expect(stat(r.directory)).rejects.toMatchObject({ code: "ENOENT" });
   },
 );
+test("a completed download survives its source being purged", async () => {
+  const f = await fixture();
+  f.state.interrupt = false;
+  await f.run();
+  const complete = await f.receipt();
+  expect(complete.state).toBe("complete");
+  vi.spyOn(f.client, "getFile").mockRejectedValue(
+    new AgentWorkplaceError("Gone", { status: 404, code: "not_found" }),
+  );
+  await expect(f.run()).resolves.toMatchObject({
+    sha256: f.file.sha256,
+    byteLength: f.file.byteLength,
+  });
+  vi.restoreAllMocks();
+});
+
+test("a purged source doesn't hide changed local bytes", async () => {
+  const f = await fixture();
+  f.state.interrupt = false;
+  await f.run();
+  const bytes = Buffer.from(f.bytes);
+  bytes[0] = 1;
+  await writeFile(f.output, bytes);
+  vi.spyOn(f.client, "getFile").mockRejectedValue(
+    new AgentWorkplaceError("Gone", { status: 404, code: "not_found" }),
+  );
+  await expect(f.run()).rejects.toThrow();
+  vi.restoreAllMocks();
+});
+
+test.each([
+  ["SIGINT", 130],
+  ["SIGTERM", 143],
+] as const)(
+  "%s removes a download nothing could resume",
+  async (signal, exitCode) => {
+    const f = await fixture();
+    f.state.interrupt = false;
+    f.state.stall = () => {
+      setTimeout(() => process.emit(signal, signal), 0);
+    };
+    await expect(
+      downloadFileLocally(f.client, "key", f.context, {
+        ref: f.ref,
+        output: f.output,
+      }),
+    ).rejects.toMatchObject({ exitCode });
+    expect((await readdir(f.dir)).filter((n) => n.startsWith(".awp"))).toEqual(
+      [],
+    );
+    await expect(stat(f.output)).rejects.toMatchObject({ code: "ENOENT" });
+  },
+);
+
+test("a download with a receipt leaves interrupts alone, to stay resumable", async () => {
+  const f = await fixture();
+  f.state.interrupt = false;
+  const before = process.listenerCount("SIGINT");
+  let during = -1;
+  f.state.stall = () => {
+    during = process.listenerCount("SIGINT");
+    throw new Error("stop here");
+  };
+  await expect(f.run()).rejects.toThrow();
+  expect(during).toBe(before);
+});
+
 test.each(["symlink", "inode"])(
   "rejects replaced partial %s without modifying the replacement",
   async (kind) => {

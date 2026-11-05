@@ -5,9 +5,14 @@ import {
   withMailOperation,
   readMailText,
   readMailAttachmentSelection,
+  requireMailText,
 } from "../mail-operation.js";
-import { executeSavedOperation, type AccessCommandOptions } from "./access.js";
-import { CliConfigurationError } from "../errors.js";
+import {
+  executeCheckedOperation,
+  executeSavedOperation,
+  type AccessCommandOptions,
+} from "./access.js";
+import { CliConfigurationError, changedOperationMessage } from "../errors.js";
 /** `Re:` or `Fwd:` plus the source subject, unless it already has one. */
 function defaultSubject(
   kind: "reply" | "reply_all" | "forward",
@@ -61,95 +66,98 @@ export async function executeMailSend(
     input?: AsyncIterable<string | Uint8Array>;
   },
 ) {
-  await executeSavedOperation(options, (client, key, status, origin) =>
-    withMailOperation(options.operation, async (store) => {
-      const attachments =
-        options.attachmentsFile === undefined
-          ? undefined
-          : await readMailAttachmentSelection(options.attachmentsFile);
-      let saved = await store.read();
-      if (saved) {
-        if (saved.version !== 1)
-          throw new CliConfigurationError(
-            "Use the original Mail composition command to retry this operation",
-          );
-        if (
-          saved.origin !== origin ||
-          saved.workplaceId !== status.workplaceId ||
-          saved.accountId !== status.accountId
-        )
-          throw new CliConfigurationError(
-            "Mail operation belongs to another server, workplace or account",
-          );
-        if (
-          (options.to !== undefined &&
-            JSON.stringify(
-              typeof options.to === "string" ? [options.to] : options.to,
-            ) !==
+  await executeCheckedOperation(
+    options,
+    "mail",
+    (client, key, status, origin) =>
+      withMailOperation(options.operation, async (store) => {
+        const attachments =
+          options.attachmentsFile === undefined
+            ? undefined
+            : await readMailAttachmentSelection(options.attachmentsFile);
+        let saved = await store.read();
+        if (saved) {
+          if (saved.version !== 1)
+            throw new CliConfigurationError(
+              "Use the original Mail composition command to retry this operation",
+            );
+          if (
+            saved.origin !== origin ||
+            saved.workplaceId !== status.workplaceId ||
+            saved.accountId !== status.accountId
+          )
+            throw new CliConfigurationError(
+              "Mail operation belongs to another server, workplace or account",
+            );
+          if (
+            (options.to !== undefined &&
               JSON.stringify(
-                typeof saved.request.to === "string"
-                  ? [saved.request.to]
-                  : saved.request.to,
-              )) ||
-          (options.cc !== undefined &&
-            JSON.stringify(options.cc) !==
-              JSON.stringify(saved.request.cc ?? [])) ||
-          (options.bcc !== undefined &&
-            JSON.stringify(options.bcc) !==
-              JSON.stringify(saved.request.bcc ?? [])) ||
-          (attachments !== undefined &&
-            JSON.stringify(attachments) !==
-              JSON.stringify(saved.request.attachments)) ||
-          (options.subject !== undefined &&
-            options.subject !== saved.request.subject) ||
-          (options.mailbox !== undefined &&
-            options.mailbox !== saved.request.mailboxId) ||
-          (options.bodyFile !== undefined &&
-            (await readMailText(options.bodyFile, options.input)) !==
-              saved.request.text)
-        )
-          throw new CliConfigurationError(
-            "Mail operation is immutable; retry with its original inputs",
-          );
-      } else {
-        if (
-          options.to === undefined ||
-          options.subject === undefined ||
-          options.bodyFile === undefined
-        )
-          throw new CliConfigurationError(
-            "A new Mail operation requires --to, --subject and --body-file",
-          );
-        checkMailRecipients(options);
-        const mailboxId = options.mailbox ?? status.mailbox?.mailboxId;
-        if (!mailboxId)
-          throw new CliConfigurationError(
-            "Mailbox discovery is unavailable; do not repeat signup",
-          );
-        saved = {
-          version: 1,
-          origin,
-          workplaceId: status.workplaceId,
-          accountId: status.accountId,
-          request: {
-            operationId: randomUUID(),
-            mailboxId,
-            to:
-              Array.isArray(options.to) && options.to.length === 1
-                ? options.to[0]!
-                : options.to,
-            ...(options.cc === undefined ? {} : { cc: options.cc }),
-            ...(options.bcc === undefined ? {} : { bcc: options.bcc }),
-            subject: options.subject,
-            text: await readMailText(options.bodyFile, options.input),
-            ...(attachments === undefined ? {} : { attachments }),
-          },
-        };
-        // The immutable ID and payload are durable before the first sending request.
-        await store.write(saved);
-      }
-      return client.sendMail({ apiKey: key }, saved.request);
-    }),
+                typeof options.to === "string" ? [options.to] : options.to,
+              ) !==
+                JSON.stringify(
+                  typeof saved.request.to === "string"
+                    ? [saved.request.to]
+                    : saved.request.to,
+                )) ||
+            (options.cc !== undefined &&
+              JSON.stringify(options.cc) !==
+                JSON.stringify(saved.request.cc ?? [])) ||
+            (options.bcc !== undefined &&
+              JSON.stringify(options.bcc) !==
+                JSON.stringify(saved.request.bcc ?? [])) ||
+            (attachments !== undefined &&
+              JSON.stringify(attachments) !==
+                JSON.stringify(saved.request.attachments)) ||
+            (options.subject !== undefined &&
+              options.subject !== saved.request.subject) ||
+            (options.mailbox !== undefined &&
+              options.mailbox !== saved.request.mailboxId) ||
+            (options.bodyFile !== undefined &&
+              (await readMailText(options.bodyFile, options.input)) !==
+                saved.request.text)
+          )
+            throw new CliConfigurationError(changedOperationMessage("Mail"));
+        } else {
+          if (
+            options.to === undefined ||
+            options.subject === undefined ||
+            options.bodyFile === undefined
+          )
+            throw new CliConfigurationError(
+              "A new Mail operation requires --to, --subject and --body-file",
+            );
+          checkMailRecipients(options);
+          const mailboxId = options.mailbox ?? status.mailbox?.mailboxId;
+          if (!mailboxId)
+            throw new CliConfigurationError(
+              "Mailbox discovery is unavailable; do not repeat signup",
+            );
+          saved = {
+            version: 1,
+            origin,
+            workplaceId: status.workplaceId,
+            accountId: status.accountId,
+            request: {
+              operationId: randomUUID(),
+              mailboxId,
+              to:
+                Array.isArray(options.to) && options.to.length === 1
+                  ? options.to[0]!
+                  : options.to,
+              ...(options.cc === undefined ? {} : { cc: options.cc }),
+              ...(options.bcc === undefined ? {} : { bcc: options.bcc }),
+              subject: options.subject,
+              text: requireMailText(
+                await readMailText(options.bodyFile, options.input),
+              ),
+              ...(attachments === undefined ? {} : { attachments }),
+            },
+          };
+          // The immutable ID and payload are durable before the first sending request.
+          await store.write(saved);
+        }
+        return client.sendMail({ apiKey: key }, saved.request);
+      }),
   );
 }
 
@@ -168,93 +176,99 @@ export async function executeMailCompose(
     input?: AsyncIterable<string | Uint8Array>;
   },
 ) {
-  await executeSavedOperation(options, (client, key, status, origin) =>
-    withMailOperation(options.operation, async (store) => {
-      const attachments =
-        options.attachmentsFile === undefined
-          ? undefined
-          : await readMailAttachmentSelection(options.attachmentsFile);
-      let saved = await store.read();
-      if (saved) {
-        if (saved.version !== 2 || saved.request.kind !== options.kind)
-          throw new CliConfigurationError(
-            "Use the original Mail command to retry this operation",
-          );
-        if (
-          saved.origin !== origin ||
-          saved.workplaceId !== status.workplaceId ||
-          saved.accountId !== status.accountId
-        )
-          throw new CliConfigurationError(
-            "Mail operation belongs to another server, workplace or account",
-          );
-        const request = saved.request;
-        if (
-          (attachments !== undefined &&
-            JSON.stringify(attachments) !==
-              JSON.stringify(request.attachments)) ||
-          (options.message !== undefined &&
-            options.message !== request.sourceMessageId) ||
-          (options.mailbox !== undefined &&
-            options.mailbox !== request.mailboxId) ||
-          (options.subject !== undefined &&
-            options.subject !== request.subject) ||
-          (options.to !== undefined &&
-            JSON.stringify(options.to) !== JSON.stringify(request.to)) ||
-          (options.cc !== undefined &&
-            JSON.stringify(options.cc) !== JSON.stringify(request.cc)) ||
-          (options.bcc !== undefined &&
-            JSON.stringify(options.bcc) !== JSON.stringify(request.bcc)) ||
-          (options.bodyFile !== undefined &&
-            (await readMailText(options.bodyFile, options.input)) !==
-              request.text)
-        )
-          throw new CliConfigurationError(
-            "Mail operation is immutable; retry with its original inputs",
-          );
-      } else {
-        if (!options.message || options.bodyFile === undefined)
-          throw new CliConfigurationError(
-            "A new Mail composition requires --message and --body-file",
-          );
-        checkMailRecipients(options);
-        const mailboxId = options.mailbox ?? status.mailbox?.mailboxId;
-        if (!mailboxId)
-          throw new CliConfigurationError(
-            "Mailbox discovery is unavailable; do not repeat signup",
-          );
-        const subject =
-          options.subject ??
-          defaultSubject(
-            options.kind,
-            (
-              await client.getMailMessage({ apiKey: key }, options.message, {
-                mailboxId,
-              })
-            ).display.subject,
-          );
-        saved = {
-          version: 2,
-          origin,
-          workplaceId: status.workplaceId,
-          accountId: status.accountId,
-          request: {
-            operationId: randomUUID(),
-            mailboxId,
-            kind: options.kind,
-            sourceMessageId: options.message,
-            subject,
-            text: await readMailText(options.bodyFile, options.input),
-            ...(attachments === undefined ? {} : { attachments }),
-            ...(options.to ? { to: options.to } : {}),
-            ...(options.cc ? { cc: options.cc } : {}),
-            ...(options.bcc ? { bcc: options.bcc } : {}),
-          },
-        };
-        await store.write(saved);
-      }
-      return client.composeMail({ apiKey: key }, saved.request);
-    }),
+  await executeCheckedOperation(
+    options,
+    "mail",
+    (client, key, status, origin) =>
+      withMailOperation(options.operation, async (store) => {
+        const attachments =
+          options.attachmentsFile === undefined
+            ? undefined
+            : await readMailAttachmentSelection(options.attachmentsFile);
+        let saved = await store.read();
+        if (saved) {
+          if (saved.version !== 2 || saved.request.kind !== options.kind)
+            throw new CliConfigurationError(
+              "Use the original Mail command to retry this operation",
+            );
+          if (
+            saved.origin !== origin ||
+            saved.workplaceId !== status.workplaceId ||
+            saved.accountId !== status.accountId
+          )
+            throw new CliConfigurationError(
+              "Mail operation belongs to another server, workplace or account",
+            );
+          const request = saved.request;
+          if (
+            (attachments !== undefined &&
+              JSON.stringify(attachments) !==
+                JSON.stringify(request.attachments)) ||
+            (options.message !== undefined &&
+              options.message !== request.sourceMessageId) ||
+            (options.mailbox !== undefined &&
+              options.mailbox !== request.mailboxId) ||
+            (options.subject !== undefined &&
+              options.subject !== request.subject) ||
+            (options.to !== undefined &&
+              JSON.stringify(options.to) !== JSON.stringify(request.to)) ||
+            (options.cc !== undefined &&
+              JSON.stringify(options.cc) !== JSON.stringify(request.cc)) ||
+            (options.bcc !== undefined &&
+              JSON.stringify(options.bcc) !== JSON.stringify(request.bcc)) ||
+            (options.bodyFile !== undefined &&
+              (await readMailText(options.bodyFile, options.input)) !==
+                request.text)
+          )
+            throw new CliConfigurationError(changedOperationMessage("Mail"));
+        } else {
+          if (!options.message || options.bodyFile === undefined)
+            throw new CliConfigurationError(
+              "A new Mail composition requires --message and --body-file",
+            );
+          checkMailRecipients(options);
+          const mailboxId = options.mailbox ?? status.mailbox?.mailboxId;
+          if (!mailboxId)
+            throw new CliConfigurationError(
+              "Mailbox discovery is unavailable; do not repeat signup",
+            );
+          const subject =
+            options.subject ??
+            defaultSubject(
+              options.kind,
+              (
+                await client.getMailMessage({ apiKey: key }, options.message, {
+                  mailboxId,
+                })
+              ).display.subject,
+            );
+          saved = {
+            version: 2,
+            origin,
+            workplaceId: status.workplaceId,
+            accountId: status.accountId,
+            request: {
+              operationId: randomUUID(),
+              mailboxId,
+              kind: options.kind,
+              sourceMessageId: options.message,
+              subject,
+              text:
+                options.kind === "forward"
+                  ? await readMailText(options.bodyFile, options.input)
+                  : requireMailText(
+                      await readMailText(options.bodyFile, options.input),
+                    ),
+              ...(attachments === undefined ? {} : { attachments }),
+              ...(options.to ? { to: options.to } : {}),
+              ...(options.cc ? { cc: options.cc } : {}),
+              ...(options.bcc ? { bcc: options.bcc } : {}),
+            },
+          };
+          await store.write(saved);
+        }
+        return client.composeMail({ apiKey: key }, saved.request);
+      }),
   );
 }
 
@@ -491,25 +505,40 @@ export async function executeMailDownload(
   });
 }
 
+/** The selected Mailbox, or the caller's own. */
+function selectedMailbox(mailbox: string | undefined, own: string | undefined) {
+  const mailboxId = mailbox ?? own;
+  if (!mailboxId)
+    throw new CliConfigurationError(
+      "This account has no Mailbox of its own; select one with --mailbox",
+    );
+  return mailboxId;
+}
+
 export async function executeMailCheckpoint(
-  options: AccessCommandOptions & { mailbox: string },
+  options: AccessCommandOptions & { mailbox?: string },
 ) {
-  await executeSavedOperation(options, (client, key) =>
-    client.getMailCheckpoint({ apiKey: key }, { mailboxId: options.mailbox }),
+  await executeSavedOperation(options, (client, key, status) =>
+    client.getMailCheckpoint(
+      { apiKey: key },
+      {
+        mailboxId: selectedMailbox(options.mailbox, status.mailbox?.mailboxId),
+      },
+    ),
   );
 }
 export async function executeMailChanges(
   options: AccessCommandOptions & {
-    mailbox: string;
+    mailbox?: string;
     cursor: string;
     limit?: number;
   },
 ) {
-  await executeSavedOperation(options, (client, key) =>
+  await executeSavedOperation(options, (client, key, status) =>
     client.listMailChanges(
       { apiKey: key },
       {
-        mailboxId: options.mailbox,
+        mailboxId: selectedMailbox(options.mailbox, status.mailbox?.mailboxId),
         cursor: options.cursor,
         limit: options.limit,
       },
@@ -518,16 +547,16 @@ export async function executeMailChanges(
 }
 export async function executeMailOperations(
   options: AccessCommandOptions & {
-    mailbox: string;
+    mailbox?: string;
     after?: string;
     limit?: number;
   },
 ) {
-  await executeSavedOperation(options, (client, key) =>
+  await executeSavedOperation(options, (client, key, status) =>
     client.listMailOperations(
       { apiKey: key },
       {
-        mailboxId: options.mailbox,
+        mailboxId: selectedMailbox(options.mailbox, status.mailbox?.mailboxId),
         after: options.after,
         limit: options.limit,
       },

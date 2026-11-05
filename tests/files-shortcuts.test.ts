@@ -127,7 +127,7 @@ test("a pending upload explains how to follow it, and --wait follows it", async 
   expect(await upload("timeout", "--wait", "1")).toEqual({
     code: 1,
     stdout: "",
-    stderr: `Error: Upload ${uploadId} is still pending after 1 seconds; check it with files status ${uploadId}\n`,
+    stderr: `Error: Upload ${uploadId} is still pending after 1 seconds; check it with files status ${uploadId}, or rerun with the same --operation to continue\n`,
   });
 });
 

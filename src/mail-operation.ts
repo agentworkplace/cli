@@ -74,13 +74,21 @@ function validate(value: unknown): SavedMailOperation {
   )
     throw invalid();
   try {
+    // An operation saved before empty bodies were refused stays readable, so
+    // `mail status` can follow it; sending it again is refused by the SDK.
+    const saved = record.request as { text?: unknown };
+    const checked = saved.text === "" ? { ...saved, text: " " } : saved;
     const request =
       record.version === 1
-        ? parseMailSendRequest(record.request)
-        : parseMailComposeRequest(record.request);
+        ? parseMailSendRequest(checked)
+        : parseMailComposeRequest(checked);
     if (!request.mailboxId || !uuid.test(request.mailboxId)) throw invalid();
     Object.assign(record, {
-      request: { ...request, mailboxId: request.mailboxId },
+      request: {
+        ...request,
+        text: saved.text,
+        mailboxId: request.mailboxId,
+      },
     });
   } catch {
     throw invalid();
@@ -99,6 +107,15 @@ export function withMailOperation<T>(
     { label: "Mail operation", maximumBytes: 2 * 1024 * 1024, validate },
     operation,
   );
+}
+
+/** Replies and new sends need text; a forward carries the original message. */
+export function requireMailText(text: string) {
+  if (!text)
+    throw new CliConfigurationError(
+      "Mail body is empty; the email provider refuses a message without text",
+    );
+  return text;
 }
 
 /** Read bounded UTF-8 text without following a final symlink; never print it. */
@@ -123,7 +140,11 @@ export async function readMailText(
     );
     if (text.includes("\0")) throw invalid();
     return text;
-  } catch {
+  } catch (error) {
+    if (error instanceof Error && "code" in error)
+      throw new CliConfigurationError(
+        `Unable to read the Mail body file: ${path}`,
+      );
     throw new CliConfigurationError(
       "Mail body must be readable UTF-8 plain text of at most 256 KiB; use --body-file - for stdin",
     );

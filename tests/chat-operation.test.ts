@@ -142,7 +142,7 @@ async function saved(path: string) {
   } & Record<string, unknown>;
 }
 function error(message: string) {
-  return `${JSON.stringify({ error: { message } })}\n`;
+  return `${JSON.stringify({ error: { message, code: "cli_error" } })}\n`;
 }
 
 test("saves the generated request before a lost response and retries with only the operation file", async () => {
@@ -336,7 +336,9 @@ test("changed inputs, another command and foreign accounts never send a request"
   ]) {
     const result = await run(f.credentials, args);
     expect(result.stderr).toBe(
-      error("Chat operation is immutable; retry with its original inputs"),
+      error(
+        "Chat operation file holds a different request; retry with its original inputs, or use a new --operation path for a new request",
+      ),
     );
     expect(result.chatCalls).toEqual([]);
   }

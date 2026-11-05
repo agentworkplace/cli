@@ -364,6 +364,7 @@ test("malformed, oversized and invalid UTF-8 input fails privately before any ne
       error: {
         message:
           "Provide UTF-8 JSON of at most 400000 bytes with an explicit operationId; use --request-file - for stdin",
+        code: "cli_error",
       },
     });
     expect(result.calls).toEqual([]);
@@ -416,7 +417,7 @@ test("server conflict and lost authority remain failures with machine-readable c
     );
     expect(result.code).not.toBe(0);
     expect(result.stdout).toBe("");
-    expect(JSON.parse(result.stderr)).toEqual({
+    expect(JSON.parse(result.stderr)).toMatchObject({
       error: { message: "Request rejected", ...failure },
     });
     expect(

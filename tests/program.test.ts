@@ -70,6 +70,7 @@ describe("agent-workplace CLI", () => {
         error: {
           message:
             "confirm-ownership is retired. Request a new ownership email with resend-nomination, then ask the nominated human to review and accept ownership using its private link. Do not ask them to share the link or a code. Check access status for completion.",
+          code: "cli_error",
         },
       });
       expect(read).not.toHaveBeenCalled();
@@ -199,7 +200,8 @@ describe("agent-workplace CLI", () => {
       await expect(run(client.createProductClient, true)).resolves.toEqual({
         exitCode: 1,
         stdout: "",
-        stderr: '{"error":{"message":"Unable to complete the request"}}\n',
+        stderr:
+          '{"error":{"message":"Unable to complete the request","code":"unexpected"}}\n',
       });
     });
 
@@ -211,7 +213,8 @@ describe("agent-workplace CLI", () => {
         await expect(run(client.createProductClient, true)).resolves.toEqual({
           exitCode: 1,
           stdout: "",
-          stderr: '{"error":{"message":"Specify an absolute API origin"}}\n',
+          stderr:
+            '{"error":{"message":"Specify an absolute API origin","code":"cli_error"}}\n',
         });
         expect(client.createProductClient).not.toHaveBeenCalled();
       },

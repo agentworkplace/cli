@@ -1,9 +1,38 @@
 import { randomBytes } from "node:crypto";
 import { constants, type Stats } from "node:fs";
-import { link, lstat, mkdir, open, rename, unlink } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
+import {
+  access,
+  link,
+  lstat,
+  mkdir,
+  open,
+  realpath,
+  rename,
+  unlink,
+} from "node:fs/promises";
+import { basename, dirname, join, resolve } from "node:path";
 import lockfile from "proper-lockfile";
 import { CliConfigurationError } from "./errors.js";
+
+/** The real path of a file whose directories may not exist yet. */
+export async function canonicalFilePath(path: string) {
+  const absolute = resolve(path),
+    missing: string[] = [];
+  let parent = dirname(absolute);
+  for (;;) {
+    try {
+      return join(await realpath(parent), ...missing, basename(absolute));
+    } catch (error) {
+      if (
+        (error as NodeJS.ErrnoException).code !== "ENOENT" ||
+        parent === dirname(parent)
+      )
+        throw error;
+      missing.unshift(basename(parent));
+      parent = dirname(parent);
+    }
+  }
+}
 
 function checkPermissions(
   stat: Stats,
@@ -87,23 +116,32 @@ async function withPrivateFile<Value, Result>(
   const directory = dirname(path);
   await mkdir(directory, { recursive: true, mode: 0o700 });
   checkPermissions(await lstat(directory), true, options.label, directory);
+  // A lock is a file beside this one, so a read-only directory can't hold one.
+  // Writers replace the file atomically, so reading without the lock is safe.
+  const writable = await access(directory, constants.W_OK).then(
+    () => true,
+    () => false,
+  );
   let compromised = false;
-  let release: () => Promise<void>;
-  try {
-    release = await lockfile.lock(path, {
-      realpath: false,
-      stale: 10_000,
-      update: 2000,
-      retries: { retries: 12, factor: 1, minTimeout: 1000, maxTimeout: 1000 },
-      onCompromised: () => {
-        compromised = true;
-      },
-    });
-  } catch {
-    throw new CliConfigurationError(
-      `${options.label} storage is busy; retry after the other process finishes`,
-    );
-  }
+  let release: () => Promise<void> = async () => {};
+  if (writable)
+    try {
+      release = await lockfile.lock(path, {
+        realpath: false,
+        stale: 10_000,
+        update: 2000,
+        retries: { retries: 12, factor: 1, minTimeout: 1000, maxTimeout: 1000 },
+        onCompromised: () => {
+          compromised = true;
+        },
+      });
+    } catch (error) {
+      throw new CliConfigurationError(
+        (error as NodeJS.ErrnoException).code === "ELOCKED"
+          ? `${options.label} storage is busy; retry after the other process finishes`
+          : `Unable to lock ${name} storage in ${directory}`,
+      );
+    }
   const checkLock = () => {
     if (compromised)
       throw new CliConfigurationError(
@@ -141,6 +179,10 @@ async function withPrivateFile<Value, Result>(
       },
       async write(value) {
         checkLock();
+        if (!writable)
+          throw new CliConfigurationError(
+            `${options.label} storage is read-only: ${directory}`,
+          );
         // Values being saved come from this command's inputs, so a rejection
         // here is an input problem, not a damaged file.
         const rejected = () =>

@@ -14,6 +14,15 @@ export function limitParser(maximum: number) {
   };
 }
 
+/** `-` means stdin for input files, but these commands print a result on stdout. */
+export function outputPath(value: string) {
+  if (value === "-")
+    throw new InvalidArgumentError(
+      "Use a file path; writing to stdout isn't supported. Use ./- for a file named -.",
+    );
+  return value;
+}
+
 /** `--wait [seconds]`: a whole number of seconds from 1 to 3600. */
 export function waitParser(value: string) {
   const seconds = Number(value);
@@ -90,6 +99,9 @@ export function validateIdentifiers(command: Command) {
         !(parent && item === "root")
       )
         invalid(command, `option '${option.flags}' argument`, item);
+    // Saved Mail operations compare this exactly, and the service keeps it lowercase.
+    if (name === "mailbox" && typeof value === "string")
+      command.setOptionValue(name, value.toLowerCase());
   }
   command.registeredArguments.forEach((argument, index) => {
     const value = command.processedArgs[index] as unknown;

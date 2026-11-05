@@ -150,6 +150,7 @@ describe("AGENT_WORKPLACE_API_KEY", () => {
           error: {
             message:
               "Choose either AGENT_WORKPLACE_API_KEY or a credential file, not both",
+            code: "cli_error",
           },
         });
       }
@@ -171,6 +172,7 @@ describe("AGENT_WORKPLACE_API_KEY", () => {
       error: {
         message:
           "This command saves credential state; unset AGENT_WORKPLACE_API_KEY and use a credential file",
+        code: "cli_error",
       },
     });
     expect(await readdir(home)).toEqual([]);
@@ -198,6 +200,7 @@ describe("AGENT_WORKPLACE_API_KEY", () => {
     expect(JSON.parse(mismatch.stderr)).toEqual({
       error: {
         message: "Credential account does not match the notification response",
+        code: "cli_error",
       },
     });
   });
@@ -283,6 +286,7 @@ describe("AGENT_WORKPLACE_API_KEY", () => {
       error: {
         message:
           "No saved credentials; save an account key or complete signup first",
+        code: "cli_error",
       },
     });
   });
