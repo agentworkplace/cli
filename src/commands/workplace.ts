@@ -1,5 +1,9 @@
 import { CliConfigurationError } from "../errors.js";
-import { executeSavedOperation, type AccessCommandOptions } from "./access.js";
+import {
+  executeCheckedOperation,
+  executeSavedOperation,
+  type AccessCommandOptions,
+} from "./access.js";
 
 export async function executeWorkplaceRead(options: AccessCommandOptions) {
   await executeSavedOperation(options, (client, key) =>
@@ -53,7 +57,7 @@ export async function executeBillingCommand(
     revision: string;
   },
 ) {
-  await executeSavedOperation(options, (client, key) =>
+  await executeCheckedOperation(options, "billingCommand", (client, key) =>
     client.requestBillingCommand(
       { apiKey: key },
       {
@@ -75,7 +79,8 @@ export async function executeBillingCommandRead(
 export async function executeBillingPurchase(
   options: AccessCommandOptions & { purchaseId: string; inspect?: boolean },
 ) {
-  await executeSavedOperation(options, (client, key) =>
+  const kind = options.inspect ? undefined : "billingPurchase";
+  await executeCheckedOperation(options, kind, (client, key) =>
     options.inspect
       ? client.getBillingPurchase({ apiKey: key }, options.purchaseId)
       : client.requestBillingPurchase(

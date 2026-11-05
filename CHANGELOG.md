@@ -1,5 +1,70 @@
 # agent-workplace
 
+## 0.12.0
+
+### Minor Changes
+
+- Make every failure say what happened and what to do next.
+
+  - `--json` errors always have a `code`. New ones are `network_error`, `local_file`,
+    `cli_error` and `unexpected`, and refused requests add a `hint` with the next step.
+  - The SDK adds `AgentWorkplaceNetworkError`, a `TypeError` with `code: "network_error"`,
+    for a request that got no response. `prepareFileUpload` now rejects a bad name or
+    media type with a named `AgentWorkplaceInputError`.
+  - A retry with different inputs says to use a new `--operation` path for a new request.
+  - `--output -` is a usage error, instead of a file named `-`.
+
+- **Breaking:** a command now exits 1 when its result says the change did not happen.
+
+  - `files put`, `text`, `copy`, `finalize`, `cancel`, `restore`, `trash`, `restore-trash`,
+    `organize`, `purge`, `clear-history`, `folders`, `mail send`, `reply`, `reply-all`,
+    `forward`, `mail copy` and the billing commands used to exit 0 on states such as
+    `conflict`, `limited`, `invalid` or `failed`. Stdout is unchanged, so scripts can
+    still read `state`. Stderr adds the next step, and with `--json` an error with
+    `code: "operation_not_completed"` and `state`. `pending`, `queued` and `uncertain`
+    still exit 0, and so do commands that only read a status.
+  - `create-key --save-to` refuses a destination that already holds a credential, because
+    replacing it left the saved key live with no local copy. Choose a new path, or use
+    `rotate-key` to replace a key.
+  - Closing stdout early, as `| head` does, no longer prints a stack trace. The command
+    keeps its own exit code, and `notifications watch` stops.
+
+### Patch Changes
+
+- Tidy up interrupted and awkward paths:
+
+  - `files put --wait` sends the bytes of an upload that hasn't started, instead of only
+    polling it.
+  - Ctrl-C on `files get` without `--operation` removes the partial file and exits 130.
+  - A credential file in a read-only directory can be read at once, and only a held lock
+    is reported as busy.
+  - `mail export --operation` may name directories that don't exist yet.
+  - `mail operations`, `checkpoint` and `changes` default `--mailbox` to your own, and an
+    uppercase `--mailbox` is accepted.
+  - A verified download stays complete when its source is purged, so an export can finish.
+  - A missing Mail body file and a missing `--credentials` path are named as such.
+
+- Refuse a Files media type that isn't `type/subtype` with optional parameters. Copying a
+  Mail attachment whose sender declared such a type saves it as
+  `application/octet-stream` instead of failing.
+- Refuse an empty Mail body before anything is reserved, because the email provider
+  refuses it even with attachments. `mail send`, `reply` and `reply-all` name the empty
+  body, and `parseMailSendRequest` and `parseMailComposeRequest` reject it. A forward may
+  still have an empty introduction, since it carries the original message.
+- `recover-keys` on your own account can no longer lock you out. It saves a new key
+  first, then revokes the others with it through the new
+  `recoverAgentKeysExceptCurrent` SDK method, so a lost response or failed write leaves a
+  working key, and running it again finishes the job. `rotate-key` restores the previous
+  key once that key confirms a cancelled handoff, and clears a cancelled operation so a
+  rerun can start fresh. Rerunning `signup` keeps unfinished rotation state.
+- Updated dependencies
+- Updated dependencies
+- Updated dependencies
+- Updated dependencies
+- Updated dependencies
+- Updated dependencies
+  - @agent-workplace/sdk@0.15.0
+
 ## 0.11.1
 
 ### Patch Changes

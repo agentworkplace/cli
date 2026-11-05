@@ -7,7 +7,7 @@ import {
   type MailExportScope,
 } from "@agent-workplace/sdk";
 import { CliConfigurationError, presentError } from "./errors.js";
-import { withPrivateJsonFile } from "./private-file.js";
+import { canonicalFilePath, withPrivateJsonFile } from "./private-file.js";
 import { exportMailBytes } from "./mail-export-bytes.js";
 import {
   checkMailExportDirectory,
@@ -84,10 +84,7 @@ export async function exportMailLocally(
       await realpath(dirname(resolve(input.output))),
       basename(resolve(input.output)),
     ),
-    operation = join(
-      await realpath(dirname(resolve(input.operation))),
-      basename(resolve(input.operation)),
-    );
+    operation = await canonicalFilePath(input.operation);
   const relation = relative(output, operation);
   if (
     relation === "" ||

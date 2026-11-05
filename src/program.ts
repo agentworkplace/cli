@@ -19,7 +19,6 @@ import {
   executeNotificationEndpointInspect,
   executeNotificationEndpointTest,
   executeNotificationEndpointRemove,
-  NotificationWaitCanceled,
 } from "./commands/notifications.js";
 import { executeMailCopy } from "./commands/mail-copy.js";
 import { executeFeedbackSend } from "./commands/feedback.js";
@@ -133,11 +132,13 @@ import {
   canonicalOption,
   hiddenAlias,
   limitParser,
+  outputPath,
   mailboxNameParser,
   resolveAliases,
   validateIdentifiers,
   waitParser,
 } from "./arguments.js";
+import { CommandCanceled } from "./errors.js";
 import { writeError, writeUsageError } from "./output.js";
 import type { WriteOutput } from "./output.js";
 
@@ -170,6 +171,8 @@ export interface RunCliOptions {
   createProductClient?: CreateProductClient;
   writeOut?: WriteOutput;
   writeErr?: WriteOutput;
+  /** Aborted when stdout's reader goes away. */
+  outputClosed?: AbortSignal;
 }
 
 export async function runCli(
@@ -477,7 +480,11 @@ export async function runCli(
       .option("--json", "output machine-readable JSON lines")
       .action(
         notificationAction((input) =>
-          executeNotificationWait({ ...input, watch: command === "watch" }),
+          executeNotificationWait({
+            ...input,
+            watch: command === "watch",
+            outputClosed: options.outputClosed,
+          }),
         ),
       );
 
@@ -2036,7 +2043,7 @@ export async function runCli(
   files
     .command("get <reference>")
     .description("Save verified file bytes without overwriting a local file")
-    .requiredOption("--output <path>", "New destination file")
+    .requiredOption("--output <path>", "New destination file", outputPath)
     .option(
       "--operation <path>",
       "Private receipt for interrupted download recovery",
@@ -2068,7 +2075,11 @@ export async function runCli(
           ? "Download the active current folder tree (UUID or root), with a partial-result manifest"
           : "Export all retained workplace Files, including history and trash metadata",
       )
-      .requiredOption("--output <path>", "New destination directory")
+      .requiredOption(
+        "--output <path>",
+        "New destination directory",
+        outputPath,
+      )
       .requiredOption(
         "--operation <path>",
         "Private export receipt outside the destination",
@@ -2281,9 +2292,9 @@ export async function runCli(
     .description(
       "Capture an independent Mail checkpoint before baseline discovery",
     )
-    .requiredOption("--mailbox <id>", "Authorized Mailbox")
+    .option("--mailbox <id>", "Authorized Mailbox; defaults to your own")
     .option("--json", "output machine-readable JSON")
-    .action(async (commandOptions: { mailbox: string; json?: boolean }) => {
+    .action(async (commandOptions: { mailbox?: string; json?: boolean }) => {
       try {
         await executeMailCheckpoint({
           ...productOptions(),
@@ -2298,13 +2309,16 @@ export async function runCli(
   mail
     .command("changes")
     .description("Read one bounded change page; a gap requires a new baseline")
-    .requiredOption("--mailbox <id>", "Authorized Mailbox bound to the cursor")
+    .option(
+      "--mailbox <id>",
+      "Authorized Mailbox bound to the cursor; defaults to your own",
+    )
     .requiredOption("--cursor <cursor>", "Saved checkpoint or continuation")
     .option("--limit <count>", "Changes per page (1–100)", limitParser(100))
     .option("--json", "output machine-readable JSON")
     .action(
       async (commandOptions: {
-        mailbox: string;
+        mailbox?: string;
         cursor: string;
         limit?: number;
         json?: boolean;
@@ -2326,7 +2340,7 @@ export async function runCli(
     .description(
       "List retained operation identities, including sends with purged content",
     )
-    .requiredOption("--mailbox <id>", "Authorized Mailbox")
+    .option("--mailbox <id>", "Authorized Mailbox; defaults to your own")
     .option("--after <id>", "Continue operation discovery")
     .option("--limit <count>", "Operations per page (1–100)", limitParser(100))
     .option("--json", "output machine-readable JSON")
@@ -2440,6 +2454,7 @@ export async function runCli(
     .requiredOption(
       "--output <path>",
       "New output directory; existing parent required",
+      outputPath,
     )
     .requiredOption(
       "--operation <path>",
@@ -2475,6 +2490,7 @@ export async function runCli(
     .requiredOption(
       "--output <path>",
       "New destination filename; existing parent directory required",
+      outputPath,
     )
     .option("--mailbox <id>", "Explicitly select an authorized Mailbox")
     .option("--json", "output machine-readable JSON")
@@ -3080,8 +3096,10 @@ export async function runCli(
   }
 
   if (failure !== undefined) {
-    writeError(failure.error, failure.json, writeErr);
-    return failure.error instanceof NotificationWaitCanceled
+    writeError(failure.error, failure.json, writeErr, {
+      operation: arguments_.includes("--operation"),
+    });
+    return failure.error instanceof CommandCanceled
       ? failure.error.exitCode
       : 1;
   }

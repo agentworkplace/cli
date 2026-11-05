@@ -176,7 +176,7 @@ test.each([
   const result = await f.invoke([option, randomUUID()]);
   expect(result.code).not.toBe(0);
   expect(result.stdout).toBe("");
-  expect(result.stderr).toContain("immutable");
+  expect(result.stderr).toContain("different request");
   expect(f.resume).not.toHaveBeenCalled();
 });
 test("refuses a saved operation belonging to a different active account", async () => {

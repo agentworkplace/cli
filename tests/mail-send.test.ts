@@ -423,3 +423,37 @@ test.each([
     await expect(stat(f.operation)).rejects.toMatchObject({ code: "ENOENT" });
   },
 );
+
+test("refuses an empty body before saving or sending anything", async () => {
+  const f = await fixture();
+  await writeFile(f.bodyFile, "");
+  const result = await f.invoke(f.initial);
+  expect(result.code).toBe(1);
+  expect(result.stdout).toBe("");
+  expect(result.stderr).toContain("Mail body is empty");
+  expect(f.send).not.toHaveBeenCalled();
+  await expect(stat(f.operation)).rejects.toMatchObject({ code: "ENOENT" });
+});
+
+test("an operation saved with an empty body stays readable", async () => {
+  const f = await fixture();
+  await f.invoke(f.initial);
+  const saved = JSON.parse(await readFile(f.operation, "utf8"));
+  saved.request.text = "";
+  await writeFile(f.operation, JSON.stringify(saved), { mode: 0o600 });
+  f.read.mockClear();
+  const code = await runCli(
+    [
+      "--credentials",
+      f.credentials,
+      "mail",
+      "status",
+      "--operation",
+      f.operation,
+      "--json",
+    ],
+    { version: "0.0.0", writeOut: () => {}, writeErr: () => {} },
+  );
+  expect(code).toBe(0);
+  expect(f.read).toHaveBeenCalledOnce();
+});

@@ -12,7 +12,14 @@ interface SavedCredential {
 }
 interface CredentialBase {
   origin: string;
-  rotation?: { operationId: string; name: string; phase: "issuing" | "saved" };
+  rotation?: {
+    operationId: string;
+    name: string;
+    phase: "issuing" | "saved";
+    /** Stays usable until completion; restored if the rotation is cancelled. */
+    predecessorKey?: string;
+    candidateId?: string;
+  };
 }
 /** Legacy creation records remain readable and retain their recovery state. */
 export interface SignupCredentialState extends CredentialBase {
@@ -152,6 +159,15 @@ function validateState(value: unknown): CredentialState {
       !["issuing", "saved"].includes(state.rotation.phase))
   )
     throw new CliConfigurationError("Invalid credential file");
+  if (
+    state.rotation &&
+    ((state.rotation.predecessorKey !== undefined &&
+      (typeof state.rotation.predecessorKey !== "string" ||
+        !state.rotation.predecessorKey)) ||
+      (state.rotation.candidateId !== undefined &&
+        !/^[0-9a-f-]{36}$/.test(state.rotation.candidateId)))
+  )
+    throw new CliConfigurationError("Invalid credential file");
   return state;
 }
 
@@ -171,6 +187,15 @@ export function environmentApiKey(options: CredentialSourceOptions) {
       "Choose either AGENT_WORKPLACE_API_KEY or a credential file, not both",
     );
   return options.apiKey;
+}
+
+/** No usable account in the selected file, naming a file the caller chose. */
+export function missingCredentials(configuredPath: string | undefined) {
+  return new CliConfigurationError(
+    configuredPath === undefined
+      ? "No saved credentials; save an account key or complete signup first"
+      : `No saved credentials in ${configuredPath}; save an account key or complete signup first`,
+  );
 }
 
 /** Commands that persist credential state require a private credential file. */

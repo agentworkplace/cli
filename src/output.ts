@@ -1,13 +1,17 @@
-import { presentError } from "./errors.js";
+import { presentError, type PresentationContext } from "./errors.js";
 
 export type WriteOutput = (value: string) => void;
+
+/** For scripts: in default output the message already says what these mean. */
+const localCodes = new Set(["cli_error", "local_file", "unexpected"]);
 
 export function writeError(
   error: unknown,
   json: boolean,
   write: WriteOutput,
+  context?: PresentationContext,
 ): void {
-  const presented = presentError(error);
+  const presented = presentError(error, context);
 
   if (json) {
     write(`${JSON.stringify({ error: presented })}\n`);
@@ -16,7 +20,9 @@ export function writeError(
 
   const details = [
     ...(presented.status === undefined ? [] : [`HTTP ${presented.status}`]),
-    ...(presented.code === undefined ? [] : [`code: ${presented.code}`]),
+    ...(presented.code === undefined || localCodes.has(presented.code)
+      ? []
+      : [`code: ${presented.code}`]),
   ];
   const suffix = details.length === 0 ? "" : ` (${details.join(", ")})`;
 
@@ -25,6 +31,7 @@ export function writeError(
     write(`Required scopes: ${presented.scopes.join(", ")}\n`);
   if (presented.retryAfterSeconds !== undefined)
     write(`Retry after ${presented.retryAfterSeconds} seconds\n`);
+  if (presented.hint) write(`${presented.hint}\n`);
   if (presented.requestId) write(`Request ID: ${presented.requestId}\n`);
   if (presented.submissionId)
     write(`Retry with --submission-id ${presented.submissionId}\n`);

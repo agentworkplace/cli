@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { constants, type BigIntStats } from "node:fs";
 import {
   link,
@@ -14,12 +14,13 @@ import {
 import { basename, dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import {
+  AgentWorkplaceError,
   type AgentWorkplace,
   type FileRef,
   parseFileReference,
 } from "@agent-workplace/sdk";
 import { accessOrigin } from "./credentials.js";
-import { CliConfigurationError } from "./errors.js";
+import { CliConfigurationError, CommandCanceled } from "./errors.js";
 import { withPrivateJsonFile } from "./private-file.js";
 
 type Identity = { dev: string; ino: string };
@@ -195,6 +196,37 @@ async function cleanPartial(r: Receipt) {
 }
 
 /** The private receipt is progress, never authorization. Product IO stays in SDK. */
+/** Check a completed download against its receipt without the service. */
+async function verifyCompleted(receipt: Receipt, output: string) {
+  if (!receipt.fileIdentity) throw failure();
+  const handle = await open(
+    output,
+    constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+  );
+  try {
+    const stat = await handle.stat({ bigint: true });
+    privateStat(stat, false);
+    if (
+      !same(stat, receipt.fileIdentity) ||
+      stat.size !== BigInt(receipt.byteLength)
+    )
+      throw failure();
+    const hash = createHash("sha256");
+    for await (const chunk of handle.createReadStream({ autoClose: false }))
+      hash.update(chunk as Buffer);
+    if (hash.digest("hex") !== receipt.sha256) throw failure();
+  } finally {
+    await handle.close();
+  }
+  return {
+    workplaceId: receipt.workplaceId,
+    fileId: receipt.fileId,
+    revisionId: receipt.revisionId,
+    byteLength: receipt.byteLength,
+    sha256: receipt.sha256,
+  };
+}
+
 export async function downloadFileLocally(
   client: AgentWorkplace,
   key: string,
@@ -240,6 +272,17 @@ export async function downloadFileLocally(
   const ephemeralIdentity = ephemeral
     ? identity(await lstat(ephemeral, { bigint: true }))
     : undefined;
+  // Without an operation nothing can resume this download, so an interrupt must
+  // reach the cleanup below. With one, the partial is what resuming needs.
+  const canceled = new AbortController();
+  const interrupt = () =>
+    canceled.abort(new CommandCanceled("Download canceled", 130));
+  const terminate = () =>
+    canceled.abort(new CommandCanceled("Download canceled", 143));
+  if (ephemeral) {
+    process.once("SIGINT", interrupt);
+    process.once("SIGTERM", terminate);
+  }
   try {
     return await withPrivateJsonFile(
       operation,
@@ -271,16 +314,31 @@ export async function downloadFileLocally(
             throw failure(
               "Download operation belongs to another server, account, revision or destination",
             );
-          const file = await client.getFile(
-            { apiKey: key },
-            saved
-              ? {
-                  workplaceId: saved.workplaceId,
-                  fileId: saved.fileId,
-                  revisionId: saved.revisionId,
-                }
-              : input.ref,
-          );
+          const file = await client
+            .getFile(
+              { apiKey: key },
+              saved
+                ? {
+                    workplaceId: saved.workplaceId,
+                    fileId: saved.fileId,
+                    revisionId: saved.revisionId,
+                  }
+                : input.ref,
+            )
+            .catch((error: unknown) => {
+              // Bytes already verified here stay valid once the source is gone.
+              if (
+                saved?.state === "complete" &&
+                error instanceof AgentWorkplaceError &&
+                error.status === 404
+              )
+                return undefined;
+              throw error;
+            });
+          if (!file) {
+            const verified = await verifyCompleted(saved!, output);
+            return { ...verified, output: input.output };
+          }
           if (
             file.workplaceId !== context.workplaceId ||
             file.fileId !== input.ref.fileId ||
@@ -391,7 +449,7 @@ export async function downloadFileLocally(
                     throw failure();
                   },
                 },
-                { resume: resume() },
+                { resume: resume(), signal: canceled.signal },
               );
               await namedIdentity(output, r.fileIdentity);
             } finally {
@@ -518,7 +576,7 @@ export async function downloadFileLocally(
                   await save({ ...r, offset });
                 },
               },
-              { resume: resume() },
+              { resume: resume(), signal: canceled.signal },
             );
             await check();
             await opened.sync();
@@ -552,7 +610,12 @@ export async function downloadFileLocally(
         }
       },
     );
+  } catch (error) {
+    if (canceled.signal.aborted) throw canceled.signal.reason;
+    throw error;
   } finally {
+    process.removeListener("SIGINT", interrupt);
+    process.removeListener("SIGTERM", terminate);
     if (ephemeral) {
       // Explicit ephemeral mode owns only these names. Unknown/replaced artifacts
       // are preserved, and an existing destination is never removed on failure.

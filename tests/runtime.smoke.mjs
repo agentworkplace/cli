@@ -127,6 +127,27 @@ try {
   assert.equal(code, 0);
   assert.equal(stderr, "");
   assert.deepEqual(JSON.parse(stdout), accountStatus);
+
+  // A reader that leaves early, as `| head` does, is not a failure: the command
+  // keeps its real exit code and never prints a stack.
+  const unread = spawn(
+    process.execPath,
+    [cliEntry, "--credentials", credentials, "account-status", "--json"],
+    {
+      stdio: ["ignore", "pipe", "pipe"],
+      env: { ...process.env, AGENT_WORKPLACE_API_URL: baseUrl },
+      timeout: 10_000,
+      killSignal: "SIGKILL",
+    },
+  );
+  unread.stdout.destroy();
+  let unreadError = "";
+  unread.stderr.on("data", (chunk) => {
+    unreadError += chunk;
+  });
+  const [unreadCode] = await once(unread, "close");
+  assert.equal(unreadCode, 0);
+  assert.equal(unreadError, "");
   console.log(`SDK and built CLI transport passed on ${process.version}`);
 } finally {
   server.closeAllConnections();

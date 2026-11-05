@@ -11,10 +11,11 @@ import { executeSavedOperation, type AccessCommandOptions } from "./access.js";
 import {
   accessOrigin,
   environmentApiKey,
+  missingCredentials,
   readCredentials,
 } from "../credentials.js";
 import { productClient, productionApiOrigin } from "../client.js";
-import { CliConfigurationError } from "../errors.js";
+import { CliConfigurationError, CommandCanceled } from "../errors.js";
 
 async function endpointRegistrationInput(
   path: string,
@@ -135,11 +136,12 @@ export function executeNotificationEndpointRemove(
   });
 }
 
-export class NotificationWaitCanceled extends CliConfigurationError {
-  constructor(readonly exitCode: 130 | 143) {
-    super("Notification wait canceled");
+export class NotificationWaitCanceled extends CommandCanceled {
+  constructor(exitCode: 130 | 143) {
+    super("Notification wait canceled", exitCode);
   }
 }
+class OutputClosed extends Error {}
 export function executeNotificationList(
   options: AccessCommandOptions & {
     account?: string;
@@ -266,10 +268,7 @@ async function notificationWaitCredential(options: AccessCommandOptions) {
   }
   // Read and release the credential-file lock before a potentially unbounded wait.
   const state = await readCredentials(options.credentials);
-  if (!state?.credential)
-    throw new CliConfigurationError(
-      "No saved credentials; save an account key or complete signup first",
-    );
+  if (!state?.credential) throw missingCredentials(options.credentials);
   if (
     options.baseUrl !== undefined &&
     accessOrigin(options.baseUrl) !== state.origin
@@ -284,14 +283,21 @@ async function notificationWaitCredential(options: AccessCommandOptions) {
 }
 
 export async function executeNotificationWait(
-  options: AccessCommandOptions & { after?: string; watch: boolean },
+  options: AccessCommandOptions & {
+    after?: string;
+    watch: boolean;
+    /** Aborted when stdout's reader goes away, so a watch does not run forever. */
+    outputClosed?: AbortSignal | undefined;
+  },
 ) {
   const { client, credential } = await notificationWaitCredential(options);
   const controller = new AbortController();
   const interrupt = () => controller.abort(new NotificationWaitCanceled(130));
   const terminate = () => controller.abort(new NotificationWaitCanceled(143));
+  const closed = () => controller.abort(new OutputClosed());
   process.once("SIGINT", interrupt);
   process.once("SIGTERM", terminate);
+  options.outputClosed?.addEventListener("abort", closed, { once: true });
   try {
     await pollNotifications({
       watch: options.watch,
@@ -334,10 +340,12 @@ export async function executeNotificationWait(
       },
     });
   } catch (error) {
+    if (controller.signal.reason instanceof OutputClosed) return;
     if (controller.signal.aborted) throw controller.signal.reason;
     throw error;
   } finally {
     process.removeListener("SIGINT", interrupt);
     process.removeListener("SIGTERM", terminate);
+    options.outputClosed?.removeEventListener("abort", closed);
   }
 }

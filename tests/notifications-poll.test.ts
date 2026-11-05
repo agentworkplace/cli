@@ -1,6 +1,13 @@
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { expect, test, vi } from "vitest";
-import { AgentWorkplaceError } from "@agent-workplace/sdk";
-import { pollNotifications } from "../src/commands/notifications.js";
+import { AgentWorkplace, AgentWorkplaceError } from "@agent-workplace/sdk";
+import {
+  executeNotificationWait,
+  pollNotifications,
+} from "../src/commands/notifications.js";
+import { withCredentials } from "../src/credentials.js";
 const account = "11111111-1111-4111-8111-111111111111";
 const status = (sequence: number, unreadCount = 1) => ({
   position: `np1.${account}.${sequence}`,
@@ -84,3 +91,38 @@ test.each([401, 403])(
     expect(wait).not.toHaveBeenCalled();
   },
 );
+
+test("watch stops quietly when its reader goes away", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "awp-watch-closed-"));
+  const credentials = join(directory, "credentials.json");
+  await withCredentials(credentials, (store) =>
+    store.write({
+      version: 1,
+      kind: "account",
+      origin: "https://api.example.test",
+      credential: {
+        accountId: account,
+        workplaceId: "22222222-2222-4222-8222-222222222222",
+        key: "fixture-key",
+      },
+    }),
+  );
+  const read = vi
+    .spyOn(AgentWorkplace.prototype, "getNotificationStatus")
+    .mockResolvedValue(status(1));
+  const closed = new AbortController();
+  const write = vi.fn(() => closed.abort());
+  try {
+    await executeNotificationWait({
+      credentials,
+      json: true,
+      write,
+      watch: true,
+      outputClosed: closed.signal,
+    });
+    expect(write).toHaveBeenCalledOnce();
+  } finally {
+    read.mockRestore();
+    await rm(directory, { recursive: true, force: true });
+  }
+});

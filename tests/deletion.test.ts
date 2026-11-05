@@ -85,7 +85,7 @@ test.each([
   expect(result.request).not.toHaveBeenCalled();
   expect(result.createClient).not.toHaveBeenCalled();
   expect(result.stderr).toBe(
-    '{"error":{"message":"Expected a private deletion receipt for the selected API origin; set AGENT_WORKPLACE_API_URL for another environment"}}\n',
+    '{"error":{"message":"Expected a private deletion receipt for the selected API origin; set AGENT_WORKPLACE_API_URL for another environment","code":"cli_error"}}\n',
   );
 });
 test("receipt cannot select non-loopback HTTP and failures never echo its secret", async () => {
@@ -100,7 +100,7 @@ test("receipt cannot select non-loopback HTTP and failures never echo its secret
   const failed = await invoke("-", JSON.stringify(receipt), origin, true, true);
   expect(failed.stdout).toBe("");
   expect(failed.stderr).toBe(
-    '{"error":{"message":"Unable to complete the request"}}\n',
+    '{"error":{"message":"Unable to complete the request","code":"unexpected"}}\n',
   );
 });
 test("production receipt uses the default and a staging receipt cannot redirect it", async () => {

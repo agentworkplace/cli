@@ -14,6 +14,7 @@ import {
 import {
   accessOrigin,
   environmentApiKey,
+  missingCredentials,
   readCredentials,
   requireCredentialFile,
   withCredentials,
@@ -21,6 +22,7 @@ import {
   type CredentialState,
 } from "../credentials.js";
 import { CliConfigurationError } from "../errors.js";
+import { requireCompleted, type OperationKind } from "../outcomes.js";
 import type { WriteOutput } from "../output.js";
 
 export interface AccessCommandOptions
@@ -129,6 +131,7 @@ export async function executeSignup(
           nominatedEmail: state.nominatedEmail,
           credential: state.credential,
           acknowledged: true,
+          ...(state.rotation ? { rotation: state.rotation } : {}),
         };
         await store.write(state);
         const status = await client.accessStatus(state.credential!.key);
@@ -259,14 +262,34 @@ export async function executeNominationChange(
   );
 }
 
+type SavedOperation = (
+  client: AgentWorkplace,
+  key: string,
+  status: AccountAccessStatus,
+  origin: string,
+) => Promise<object>;
+
 export async function executeSavedOperation(
   options: AccessCommandOptions,
-  operation: (
-    client: AgentWorkplace,
-    key: string,
-    status: AccountAccessStatus,
-    origin: string,
-  ) => Promise<object>,
+  operation: SavedOperation,
+) {
+  await printSavedOperation(options, operation);
+}
+
+/** For mutations: the printed result stays on stdout, and the command then fails
+ * if that result says the change did not happen. No kind means a plain read. */
+export async function executeCheckedOperation(
+  options: AccessCommandOptions,
+  kind: OperationKind | undefined,
+  operation: SavedOperation,
+) {
+  const result = await printSavedOperation(options, operation);
+  if (kind !== undefined) requireCompleted(kind, result);
+}
+
+async function printSavedOperation(
+  options: AccessCommandOptions,
+  operation: SavedOperation,
 ) {
   const apiKey = environmentApiKey(options);
   if (apiKey !== undefined) {
@@ -274,20 +297,14 @@ export async function executeSavedOperation(
     const origin = accessOrigin(options.baseUrl ?? productionApiOrigin);
     const client = productClient(options, origin);
     const status = await client.accountStatus({ apiKey });
-    output(
-      await operation(client, apiKey, status, origin),
-      options.json,
-      options.write,
-    );
-    return;
+    const result = await operation(client, apiKey, status, origin);
+    output(result, options.json, options.write);
+    return result;
   }
   // Release the credential lock before any request so commands can run in
   // parallel; only commands that write credential state hold it throughout.
   const state = await readCredentials(options.credentials);
-  if (!state?.credential)
-    throw new CliConfigurationError(
-      "No saved credentials; save an account key or complete signup first",
-    );
+  if (!state?.credential) throw missingCredentials(options.credentials);
   if (
     options.baseUrl !== undefined &&
     accessOrigin(options.baseUrl) !== state.origin
@@ -311,6 +328,7 @@ export async function executeSavedOperation(
     state.origin,
   );
   output(result, options.json, options.write);
+  return result;
 }
 
 export async function executeCurrentNomination(options: AccessCommandOptions) {

@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { AgentWorkplaceError } from "@agent-workplace/sdk";
 import type {
   AgentWorkplace,
   ChatAddRequest,
@@ -19,7 +20,7 @@ import {
   type ChatAction,
   type SavedChatOperation,
 } from "../chat-operation.js";
-import { CliConfigurationError } from "../errors.js";
+import { CliConfigurationError, changedOperationMessage } from "../errors.js";
 
 /** File input carries the caller's explicit operationId. The CLI never generates
  * or changes it, including after interruption or a lost response. */
@@ -247,9 +248,7 @@ async function executeChatMutation(
             "Chat operation belongs to another server, workplace or account",
           );
         if (!sameIntent(saved, intent))
-          throw new CliConfigurationError(
-            "Chat operation is immutable; retry with its original inputs",
-          );
+          throw new CliConfigurationError(changedOperationMessage("Chat"));
       } else {
         saved = newOperation(action, intent, {
           version: 1,
@@ -323,11 +322,32 @@ export function executeChatEntries(
   );
 }
 export function executeChatCreate(options: ChatMutationOptions) {
-  return executeChatMutation("create", options, (client, key, _id, request) =>
-    client.createChatConversation(
-      { apiKey: key },
-      request as ChatCreateRequest,
-    ),
+  return executeChatMutation(
+    "create",
+    options,
+    async (client, key, _id, request) => {
+      try {
+        return await client.createChatConversation(
+          { apiKey: key },
+          request as ChatCreateRequest,
+        );
+      } catch (error) {
+        // The SDK checks the request shape, so a 400 here is about the participants.
+        if (error instanceof AgentWorkplaceError && error.status === 400)
+          throw new AgentWorkplaceError(
+            "Chat participants must be active agent accounts in this workplace",
+            {
+              status: error.status,
+              ...(error.code === undefined ? {} : { code: error.code }),
+              ...(error.requestId === undefined
+                ? {}
+                : { requestId: error.requestId }),
+              cause: error,
+            },
+          );
+        throw error;
+      }
+    },
   );
 }
 export function executeChatPost(options: ChatMutationOptions) {
