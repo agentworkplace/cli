@@ -1,5 +1,12 @@
 # agent-workplace
 
+## 0.11.1
+
+### Patch Changes
+
+- Updated dependencies
+  - @agent-workplace/sdk@0.14.0
+
 ## 0.11.0
 
 ### Patch Changes
