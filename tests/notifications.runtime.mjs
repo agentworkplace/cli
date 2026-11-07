@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
+import { closeSync, openSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
@@ -40,7 +41,10 @@ export async function testNotificationPolling() {
   );
   const cli = fileURLToPath(new URL("../dist/index.js", import.meta.url));
   const children = [];
-  async function invoke(command, { after, signal, waitForOutput } = {}) {
+  async function invoke(
+    command,
+    { after, signal, waitForOutput, closeStderr } = {},
+  ) {
     const child = spawn(
       process.execPath,
       [
@@ -59,6 +63,7 @@ export async function testNotificationPolling() {
       },
     );
     children.push(child);
+    if (closeStderr) child.stderr.destroy();
     let stdout = "",
       stderr = "";
     child.stdout.on("data", (value) => {
@@ -97,6 +102,35 @@ export async function testNotificationPolling() {
     assert.equal(idle.code, 143);
     assert.equal(idle.stdout, "");
     assert.match(idle.stderr, /Notification wait canceled/);
+    // Cancellation writes to stderr and has its own status, so a crash on the
+    // closed stream would show up here as exit 1.
+    const unreadError = await invoke("wait", {
+      after: status.position,
+      signal: "SIGTERM",
+      closeStderr: true,
+    });
+    assert.equal(unreadError.code, 143);
+    // A watch has no end of its own, so a failed write has to stop it.
+    const readOnly = openSync(credentials, "r");
+    const refused = spawn(
+      process.execPath,
+      [cli, "--credentials", credentials, "notifications", "watch", "--json"],
+      {
+        stdio: ["ignore", readOnly, "pipe"],
+        timeout: 10000,
+        killSignal: "SIGKILL",
+      },
+    );
+    closeSync(readOnly);
+    children.push(refused);
+    let refusedError = "";
+    refused.stderr.on("data", (value) => {
+      refusedError += value;
+    });
+    const [refusedCode, refusedSignal] = await once(refused, "close");
+    assert.equal(refusedSignal, null);
+    assert.equal(refusedCode, 1);
+    assert.equal(JSON.parse(refusedError).error.code, "cli_error");
     console.log(
       `Built CLI notification wait/watch and cancellation passed on ${process.version}`,
     );

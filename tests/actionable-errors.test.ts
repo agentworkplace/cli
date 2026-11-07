@@ -140,6 +140,31 @@ describe("refused requests name the next step", () => {
     expect(result.stderr).toContain("use a new --operation path");
   });
 
+  test.each(["delivery_limited", "storage_limited", "temporary_limited"])(
+    "%s keeps the saved operation for a retry",
+    async (code) => {
+      const f = await fixture();
+      vi.spyOn(AgentWorkplace.prototype, "sendMail").mockRejectedValue(
+        refused(409, code),
+      );
+      const result = await f.run([
+        "mail",
+        "send",
+        "--operation",
+        join(f.directory, "private", "send.json"),
+        "--to",
+        "someone@example.test",
+        "--subject",
+        "Hello",
+        "--body-file",
+        join(f.directory, "body.txt"),
+      ]);
+      expect(result.code).toBe(1);
+      expect(result.stderr).toContain("repeat with the same --operation");
+      expect(result.stderr).not.toContain("new --operation");
+    },
+  );
+
   test("a rate limit is not told to change anything", async () => {
     const f = await fixture();
     vi.spyOn(AgentWorkplace.prototype, "sendMail").mockRejectedValue(

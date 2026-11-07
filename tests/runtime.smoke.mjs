@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createServer } from "node:http";
 import { once } from "node:events";
+import { closeSync, openSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -73,6 +74,18 @@ const server = createServer((request, response) => {
   response.setHeader("content-type", "application/json");
   response.setHeader("X-Request-ID", request.headers["x-request-id"]);
   if (
+    request.url === "/v1/access/nomination/send" &&
+    request.headers.authorization === "Bearer fixture-key"
+  ) {
+    response.end(
+      JSON.stringify({
+        state: "throttled",
+        retryAt: "2026-09-17T01:00:00.000Z",
+      }),
+    );
+    return;
+  }
+  if (
     request.url !== "/v1/access/account" ||
     request.headers.authorization !== "Bearer fixture-key"
   ) {
@@ -130,24 +143,58 @@ try {
 
   // A reader that leaves early, as `| head` does, is not a failure: the command
   // keeps its real exit code and never prints a stack.
-  const unread = spawn(
+  async function withClosedStdout(command) {
+    const unread = spawn(
+      process.execPath,
+      [cliEntry, "--credentials", credentials, command, "--json"],
+      {
+        stdio: ["ignore", "pipe", "pipe"],
+        env: { ...process.env, AGENT_WORKPLACE_API_URL: baseUrl },
+        timeout: 10_000,
+        killSignal: "SIGKILL",
+      },
+    );
+    unread.stdout.destroy();
+    let error = "";
+    unread.stderr.on("data", (chunk) => {
+      error += chunk;
+    });
+    const [code] = await once(unread, "close");
+    return { code, error };
+  }
+  assert.deepEqual(await withClosedStdout("account-status"), {
+    code: 0,
+    error: "",
+  });
+  // Nor does it hide a failure: this result reaches the closed stdout first, and
+  // the command still exits 1 with its usual error instead of a stack.
+  const throttled = await withClosedStdout("resend-nomination");
+  assert.equal(throttled.code, 1);
+  assert.equal(
+    JSON.parse(throttled.error).error.code,
+    "operation_not_completed",
+  );
+  // Any other write failure is a real one, reported like every other failure.
+  // A read-only descriptor refuses the write on any POSIX system.
+  const readOnly = openSync(credentials, "r");
+  const refused = spawn(
     process.execPath,
     [cliEntry, "--credentials", credentials, "account-status", "--json"],
     {
-      stdio: ["ignore", "pipe", "pipe"],
+      stdio: ["ignore", readOnly, "pipe"],
       env: { ...process.env, AGENT_WORKPLACE_API_URL: baseUrl },
       timeout: 10_000,
       killSignal: "SIGKILL",
     },
   );
-  unread.stdout.destroy();
-  let unreadError = "";
-  unread.stderr.on("data", (chunk) => {
-    unreadError += chunk;
+  closeSync(readOnly);
+  let refusedError = "";
+  refused.stderr.on("data", (chunk) => {
+    refusedError += chunk;
   });
-  const [unreadCode] = await once(unread, "close");
-  assert.equal(unreadCode, 0);
-  assert.equal(unreadError, "");
+  const [refusedCode] = await once(refused, "close");
+  assert.equal(refusedCode, 1);
+  assert.equal(JSON.parse(refusedError).error.code, "cli_error");
   console.log(`SDK and built CLI transport passed on ${process.version}`);
 } finally {
   server.closeAllConnections();
