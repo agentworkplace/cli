@@ -1,5 +1,9 @@
 import { randomUUID } from "node:crypto";
-import { AgentWorkplaceError, type AgentWorkplace } from "@agent-workplace/sdk";
+import {
+  AgentWorkplaceError,
+  type AccountAccessStatus,
+  type AgentWorkplace,
+} from "@agent-workplace/sdk";
 import { productClient } from "../client.js";
 import {
   accessOrigin,
@@ -149,32 +153,53 @@ export async function executeParticipantRemoval(
     client.removeParticipant({ apiKey }, accountId ?? status.accountId),
   );
 }
+/** The key this command authenticates with, when the target is this account. An
+ * API without `currentKeyId` gives none, so there is no marker and no guard. */
+function keyInUse(status: AccountAccessStatus, accountId: string) {
+  return accountId.toLowerCase() === status.accountId
+    ? status.currentKeyId
+    : undefined;
+}
+
 export async function executeKeyList(
   options: AccessCommandOptions,
   accountId?: string,
 ) {
-  await executeSavedOperation(options, (client, apiKey, status) =>
-    client.listAgentKeys({ apiKey }, accountId ?? status.accountId),
-  );
+  await executeSavedOperation(options, async (client, apiKey, status) => {
+    const target = accountId ?? status.accountId;
+    const list = await client.listAgentKeys({ apiKey }, target);
+    const current = keyInUse(status, target);
+    return {
+      ...list,
+      keys: list.keys.map((key) =>
+        key.id === current ? { ...key, current: true } : key,
+      ),
+    };
+  });
 }
 export async function executeKeyEdit(
   options: AccessCommandOptions,
-  input: { accountId?: string; keyId: string; name?: string },
+  input: {
+    accountId?: string;
+    keyId: string;
+    name?: string;
+    allowCurrent?: boolean;
+  },
 ) {
-  await executeSavedOperation(options, (client, apiKey, status) =>
-    input.name === undefined
-      ? client.revokeAgentKey(
-          { apiKey },
-          input.accountId ?? status.accountId,
-          input.keyId,
-        )
-      : client.renameAgentKey(
-          { apiKey },
-          input.accountId ?? status.accountId,
-          input.keyId,
-          input.name,
-        ),
-  );
+  await executeSavedOperation(options, async (client, apiKey, status) => {
+    const target = input.accountId ?? status.accountId;
+    if (input.name !== undefined)
+      return client.renameAgentKey({ apiKey }, target, input.keyId, input.name);
+    if (
+      !input.allowCurrent &&
+      input.keyId.toLowerCase() === keyInUse(status, target)
+    )
+      throw new CliConfigurationError(
+        "This is the key in use, and revoking it ends this credential's access; use rotate-key to replace it, or pass --allow-current",
+        { code: "current_key" },
+      );
+    return client.revokeAgentKey({ apiKey }, target, input.keyId);
+  });
 }
 
 /** MCP agent grants are listed and revoked with the agent's key; a grant

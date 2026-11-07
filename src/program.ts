@@ -1330,11 +1330,17 @@ export async function runCli(
       .option("--json", "output machine-readable JSON");
     if (action === "rename-key")
       command.requiredOption("--name <name>", "New key name");
+    else
+      command.option(
+        "--allow-current",
+        "Revoke the key this command authenticates with",
+      );
     command.action(
       async (input: {
         accountId?: string;
         keyId: string;
         name?: string;
+        allowCurrent?: boolean;
         json?: boolean;
       }) => {
         try {
@@ -2458,7 +2464,7 @@ export async function runCli(
     )
     .requiredOption(
       "--operation <path>",
-      "Private operation file outside output; existing private parent required",
+      "Private operation file outside output; a missing parent is created privately",
     )
     .option("--json", "output machine-readable JSON")
     .action(

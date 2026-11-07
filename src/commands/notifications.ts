@@ -268,7 +268,7 @@ async function notificationWaitCredential(options: AccessCommandOptions) {
   }
   // Read and release the credential-file lock before a potentially unbounded wait.
   const state = await readCredentials(options.credentials);
-  if (!state?.credential) throw missingCredentials(options.credentials);
+  if (!state?.credential) throw missingCredentials(options.credentials, state);
   if (
     options.baseUrl !== undefined &&
     accessOrigin(options.baseUrl) !== state.origin
