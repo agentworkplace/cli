@@ -130,6 +130,65 @@ const billing = (command: string) => () => [
 ];
 const purchase = () => ["workplace", "billing", "upgrade", "--purchase-id", id];
 
+describe("resend-nomination", () => {
+  const retryAt = "2026-11-06T12:00:00.000Z";
+  async function resend(result: object) {
+    const directory = await mkdtemp(join(tmpdir(), "awp-outcomes-"));
+    directories.push(directory);
+    const credentials = join(directory, "credentials.json");
+    const accountId = randomUUID(),
+      workplaceId = randomUUID();
+    await withCredentials(credentials, (store) =>
+      store.write({
+        version: 1,
+        kind: "account",
+        origin: "https://fixture.test",
+        credential: { accountId, workplaceId, key: "private" },
+      }),
+    );
+    vi.spyOn(AgentWorkplace.prototype, "accountStatus").mockResolvedValue({
+      accountId,
+      workplaceId,
+    } as Awaited<ReturnType<AgentWorkplace["accountStatus"]>>);
+    vi.spyOn(AgentWorkplace.prototype, "resendNomination").mockResolvedValue(
+      result as Awaited<ReturnType<AgentWorkplace["resendNomination"]>>,
+    );
+    let stdout = "",
+      stderr = "";
+    const code = await runCli(
+      ["--credentials", credentials, "resend-nomination", "--json"],
+      {
+        version: "0.0.0",
+        writeOut: (value) => {
+          stdout += value;
+        },
+        writeErr: (value) => {
+          stderr += value;
+        },
+      },
+    );
+    return { code, stdout, stderr };
+  }
+
+  test("a throttled resend exits 1, keeps its result and says when to retry", async () => {
+    const result = await resend({ state: "throttled", retryAt });
+    expect(result.code).toBe(1);
+    expect(JSON.parse(result.stdout)).toEqual({ state: "throttled", retryAt });
+    const { error } = JSON.parse(result.stderr);
+    expect(error).toMatchObject({
+      code: "operation_not_completed",
+      state: "throttled",
+    });
+    expect(error.message).toContain(retryAt);
+  });
+
+  test("a queued resend exits 0", async () => {
+    const result = await resend({ state: "queued" });
+    expect(result.code).toBe(0);
+    expect(result.stderr).toBe("");
+  });
+});
+
 type Case = readonly [
   name: string,
   method: keyof AgentWorkplace,

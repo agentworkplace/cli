@@ -58,6 +58,49 @@ async function fixture() {
   return { directory, run };
 }
 
+describe("an unfinished signup", () => {
+  const unfinished = {
+    origin: "https://fixture.test",
+    name: "Agent",
+    nominatedEmail: "owner@example.test",
+    bootstrapProof: "a".repeat(43),
+    acknowledged: false,
+  };
+  async function read(args: string[], state?: typeof unfinished) {
+    const directory = await mkdtemp(join(tmpdir(), "awp-errors-"));
+    directories.push(directory);
+    const credentials = join(directory, "a.json");
+    if (state)
+      await withCredentials(credentials, (store) => store.write(state));
+    let stderr = "";
+    const code = await runCli(["--credentials", credentials, ...args], {
+      version: "0.0.0",
+      writeOut: () => {},
+      writeErr: (value) => {
+        stderr += value;
+      },
+    });
+    return { code, stderr, credentials };
+  }
+
+  test("says it hasn't finished and how to continue", async () => {
+    const result = await read(["account-status", "--json"], unfinished);
+    expect(result.code).toBe(1);
+    const { error } = JSON.parse(result.stderr);
+    expect(error.message).toBe(
+      `The signup in ${result.credentials} hasn't finished; run signup again with the same --name and --owner-email`,
+    );
+  });
+
+  test("a missing file still reports no credentials", async () => {
+    const result = await read(["account-status", "--json"]);
+    expect(result.code).toBe(1);
+    expect(JSON.parse(result.stderr).error.message).toContain(
+      "No saved credentials in",
+    );
+  });
+});
+
 describe("refused requests name the next step", () => {
   const refused = (status: number, code: string) =>
     new AgentWorkplaceError("Mail operation rejected", { status, code });

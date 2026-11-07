@@ -56,13 +56,20 @@ const failures = {
     superseded:
       "A newer billing change replaced this one; read workplace billing status",
   },
+  nomination: {
+    throttled: ({ retryAt }: { retryAt?: unknown }) =>
+      `No email was queued because a send limit was reached; run resend-nomination again after ${String(retryAt)}`,
+  },
   billingPurchase: {
     failed: "The purchase failed; read workplace billing status",
     expired: "The purchase expired; request it again with a new --purchase-id",
     superseded:
       "A newer purchase replaced this one; read workplace billing status",
   },
-} satisfies Record<string, Record<string, string>>;
+} satisfies Record<
+  string,
+  Record<string, string | ((result: { retryAt?: unknown }) => string)>
+>;
 
 export type OperationKind = keyof typeof failures;
 
@@ -70,7 +77,12 @@ export type OperationKind = keyof typeof failures;
 export function requireCompleted(kind: OperationKind, result: object) {
   const state = "state" in result ? result.state : undefined;
   if (typeof state !== "string") return;
-  const failure = (failures[kind] as Record<string, string>)[state];
+  const failure = (
+    failures[kind] as Record<string, string | ((value: object) => string)>
+  )[state];
   if (failure !== undefined)
-    throw new OperationNotCompletedError(failure, state);
+    throw new OperationNotCompletedError(
+      typeof failure === "string" ? failure : failure(result),
+      state,
+    );
 }

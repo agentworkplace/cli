@@ -189,12 +189,17 @@ export function environmentApiKey(options: CredentialSourceOptions) {
   return options.apiKey;
 }
 
-/** No usable account in the selected file, naming a file the caller chose. */
-export function missingCredentials(configuredPath: string | undefined) {
+/** No usable account in the selected file, naming a file the caller chose. A file
+ * that holds state without a credential is a signup that hasn't finished. */
+export function missingCredentials(
+  configuredPath: string | undefined,
+  state?: CredentialState | null,
+) {
+  const location = configuredPath === undefined ? "" : ` in ${configuredPath}`;
   return new CliConfigurationError(
-    configuredPath === undefined
-      ? "No saved credentials; save an account key or complete signup first"
-      : `No saved credentials in ${configuredPath}; save an account key or complete signup first`,
+    state
+      ? `The signup${location} hasn't finished; run signup again with the same --name and --owner-email`
+      : `No saved credentials${location}; save an account key or complete signup first`,
   );
 }
 

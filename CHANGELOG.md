@@ -1,5 +1,17 @@
 # agent-workplace
 
+## 0.13.0
+
+### Minor Changes
+
+- **Breaking:** `resend-nomination` now exits 1 when a send limit means no email was queued. Stdout keeps the result, with `state: throttled` and `retryAt`, and stderr says when to retry. The error for an unfinished signup now says it hasn't finished and how to continue, and `mail export --help` says a missing `--operation` parent is created privately.
+- `accountStatus` now returns `currentKeyId` when a key authenticates the request. In the CLI, `keys` marks that key with `current: true`, and `revoke-key` refuses it unless you pass `--allow-current`. Older APIs omit the field, so the CLI then shows no marker and applies no check.
+
+### Patch Changes
+
+- Updated dependencies
+  - @agent-workplace/sdk@0.16.0
+
 ## 0.12.0
 
 ### Minor Changes

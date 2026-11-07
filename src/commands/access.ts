@@ -210,7 +210,8 @@ export async function executeAccess(
   options: AccessCommandOptions,
   resend = false,
 ) {
-  await executeSavedOperation(options, async (client, key) => {
+  const kind = resend ? "nomination" : undefined;
+  await executeCheckedOperation(options, kind, async (client, key) => {
     try {
       return await (resend
         ? client.resendNomination(key)
@@ -304,7 +305,7 @@ async function printSavedOperation(
   // Release the credential lock before any request so commands can run in
   // parallel; only commands that write credential state hold it throughout.
   const state = await readCredentials(options.credentials);
-  if (!state?.credential) throw missingCredentials(options.credentials);
+  if (!state?.credential) throw missingCredentials(options.credentials, state);
   if (
     options.baseUrl !== undefined &&
     accessOrigin(options.baseUrl) !== state.origin

@@ -1,5 +1,7 @@
 import { createHash } from "node:crypto";
 import {
+  chmod,
+  mkdir,
   mkdtemp,
   rm,
   readFile,
@@ -265,6 +267,31 @@ test("Recovery refuses inventory tampering before another source request", async
   const calls = f.state.grants;
   await expect(f.run()).rejects.toThrow("inventory");
   expect(f.state.grants).toBe(calls);
+});
+test("Creates a missing operation parent privately and refuses a shared one", async () => {
+  const f = await fixture();
+  const parent = join(f.dir, "new", "private");
+  const created = await exportMailLocally(
+    f.client,
+    "fixture-secret",
+    f.context,
+    {
+      ...f.input,
+      operation: join(parent, "operation.json"),
+    },
+  );
+  expect(created.state).toBe("complete");
+  expect((await stat(parent)).mode & 0o777).toBe(0o700);
+  const shared = join(f.dir, "shared");
+  await mkdir(shared, { mode: 0o755 });
+  await chmod(shared, 0o755);
+  await expect(
+    exportMailLocally(f.client, "fixture-secret", f.context, {
+      ...f.input,
+      output: join(f.dir, "another"),
+      operation: join(shared, "operation.json"),
+    }),
+  ).rejects.toThrow("accessible only to you");
 });
 test("Local filename collision is preserved and reported instead of overwritten", async () => {
   const f = await fixture();
