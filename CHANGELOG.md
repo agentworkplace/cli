@@ -1,5 +1,12 @@
 # agent-workplace
 
+## 0.13.1
+
+### Patch Changes
+
+- A send or Chat post refused for capacity (`delivery_limited`, `storage_limited` or `temporary_limited`) now says to repeat with the same `--operation`, not to use a new one. So does `mail status` when it finds nothing queued for a saved operation.
+- A failed write to stdout or stderr, such as a full disk, no longer stops the command partway with a stack trace. The command finishes, then exits 1 with a normal error, as JSON with `code: cli_error` under `--json`. Closing stdout early is unchanged.
+
 ## 0.13.0
 
 ### Minor Changes

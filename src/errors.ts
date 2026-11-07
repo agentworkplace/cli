@@ -27,6 +27,14 @@ export class CommandCanceled extends CliConfigurationError {
   }
 }
 
+/** Stdout or stderr refused a write for a reason other than its reader leaving.
+ * The command ran to its end, so a change it made may still have happened. */
+export class OutputWriteError extends CliConfigurationError {
+  constructor(code: string | undefined) {
+    super(`Unable to write output${code === undefined ? "" : ` (${code})`}`);
+  }
+}
+
 /** The message for a retry whose inputs differ from its saved operation. */
 export function changedOperationMessage(
   label: string,
@@ -60,7 +68,16 @@ export interface PresentedError {
 export interface PresentationContext {
   /** The command saved its request in an operation file. */
   operation?: boolean;
+  /** The command only read a saved operation's status. */
+  statusRead?: boolean;
 }
+
+/** Refused before anything was stored, so the saved operation stays usable. */
+const capacityRefusals = new Set<string | undefined>([
+  "delivery_limited",
+  "storage_limited",
+  "temporary_limited",
+]);
 
 const localFailures = new Map([
   ["EACCES", "Permission denied"],
@@ -76,15 +93,19 @@ const localFailures = new Map([
 /** The next step after a refused request, from its status and code alone. */
 function nextStep(
   error: AgentWorkplaceError,
-  { operation }: PresentationContext,
+  { operation, statusRead }: PresentationContext,
 ) {
   const again = operation ? ", then use a new --operation path" : "";
   if (error.status === 401)
     return "The key is invalid or revoked; check --credentials, or ask an administrator to recover this account's keys";
   if (error.code === "not_found")
-    return `Check the ID, and that this account can reach it${again}`;
+    return statusRead
+      ? "Nothing is queued for this operation; keep its file, and repeat the send to try again"
+      : `Check the ID, and that this account can reach it${again}`;
   if (error.code === "conflict")
     return `It changed since you read it; read it again${again}`;
+  if (operation && capacityRefusals.has(error.code))
+    return "Nothing was sent; once there's room, repeat with the same --operation";
   if (operation && error.status >= 400 && error.status < 500)
     return error.status === 408 || error.status === 429
       ? undefined
@@ -100,6 +121,14 @@ export function presentError(
     return {
       ...presentError(error.original, context),
       submissionId: error.submissionId,
+    };
+  if (error instanceof OutputWriteError)
+    return {
+      message: error.message,
+      code: error.code,
+      hint: context.operation
+        ? "Retry with the same --operation, which can't apply twice"
+        : "The command may have finished; check its result before repeating it",
     };
   if (error instanceof CliConfigurationError)
     return { message: error.message, code: error.code };

@@ -153,6 +153,7 @@ interface JsonOptions {
 interface OperationalFailure {
   error: unknown;
   json: boolean;
+  statusRead?: boolean;
 }
 
 type InvitationLinkInput = {
@@ -171,8 +172,10 @@ export interface RunCliOptions {
   createProductClient?: CreateProductClient;
   writeOut?: WriteOutput;
   writeErr?: WriteOutput;
-  /** Aborted when stdout's reader goes away. */
+  /** Aborted when stdout stops accepting output. */
   outputClosed?: AbortSignal;
+  /** Reads a write failure that a successful command has to report. */
+  outputFailure?: () => Error | undefined;
 }
 
 export async function runCli(
@@ -2815,7 +2818,11 @@ export async function runCli(
           write: writeOut,
         });
       } catch (error) {
-        failure = { error, json: commandOptions.json ?? false };
+        failure = {
+          error,
+          json: commandOptions.json ?? false,
+          statusRead: true,
+        };
       }
     });
   mail
@@ -3090,11 +3097,23 @@ export async function runCli(
       }
     });
 
+  const operation = arguments_.includes("--operation");
+  // Streams report a failed write on a later tick, so wait for it before a
+  // finished command claims success. A command that failed keeps its own status.
+  const finish = async (status: number) => {
+    if (status !== 0 || options.outputFailure === undefined) return status;
+    await new Promise((resolve) => setImmediate(resolve));
+    const outputFailure = options.outputFailure();
+    if (outputFailure === undefined) return status;
+    writeError(outputFailure, requestsJson, writeErr, { operation });
+    return 1;
+  };
+
   try {
     await program.parseAsync([...arguments_], { from: "user" });
   } catch (error) {
     if (error instanceof CommanderError) {
-      return error.exitCode;
+      return finish(error.exitCode);
     }
 
     writeError(error, false, writeErr);
@@ -3103,12 +3122,13 @@ export async function runCli(
 
   if (failure !== undefined) {
     writeError(failure.error, failure.json, writeErr, {
-      operation: arguments_.includes("--operation"),
+      operation,
+      statusRead: failure.statusRead,
     });
     return failure.error instanceof CommandCanceled
       ? failure.error.exitCode
       : 1;
   }
 
-  return 0;
+  return finish(0);
 }

@@ -12,7 +12,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, test, vi } from "vitest";
-import { AgentWorkplace } from "@agent-workplace/sdk";
+import { AgentWorkplace, AgentWorkplaceError } from "@agent-workplace/sdk";
 import { withCredentials } from "../src/credentials.js";
 import { executeMailSend } from "../src/commands/mail.js";
 import { runCli } from "../src/program.js";
@@ -178,6 +178,52 @@ test("CLI durably saves before a lost response, retries unchanged and reads stat
     { apiKey: "rotated-key" },
     saved.request.operationId,
   );
+});
+
+test("a send refused for capacity keeps its operation and the retry repeats it", async () => {
+  const f = await fixture();
+  f.send.mockRejectedValueOnce(
+    new AgentWorkplaceError("Mail operation rejected", {
+      status: 409,
+      code: "delivery_limited",
+    }),
+  );
+  const refused = await f.invoke(f.initial);
+  expect(refused.code).toBe(1);
+  expect(refused.stdout).toBe("");
+  expect(JSON.parse(refused.stderr).error).toEqual({
+    message: "Mail operation rejected",
+    status: 409,
+    code: "delivery_limited",
+    hint: "Nothing was sent; once there's room, repeat with the same --operation",
+  });
+  const stored = await readFile(f.operation, "utf8");
+  const { request } = JSON.parse(stored);
+
+  f.read.mockRejectedValueOnce(
+    new AgentWorkplaceError("Mail operation not found", {
+      status: 404,
+      code: "not_found",
+    }),
+  );
+  const status = await f.invoke(["status", "--operation", f.operation]);
+  expect(status.code).toBe(1);
+  expect(JSON.parse(status.stderr).error).toMatchObject({
+    code: "not_found",
+    hint: "Nothing is queued for this operation; keep its file, and repeat the send to try again",
+  });
+
+  const retried = await f.invoke(["send", "--operation", f.operation]);
+  expect(retried).toEqual({
+    code: 0,
+    stdout:
+      JSON.stringify({ ...f.result, operationId: request.operationId }) + "\n",
+    stderr: "",
+  });
+  expect(f.send).toHaveBeenCalledTimes(2);
+  expect(f.send.mock.calls[1]).toEqual(f.send.mock.calls[0]);
+  expect(f.send.mock.calls[1]![1]).toEqual(request);
+  expect(await readFile(f.operation, "utf8")).toBe(stored);
 });
 
 test("CLI refuses changed intent, unsafe files and foreign bindings without sending", async () => {
