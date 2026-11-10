@@ -93,7 +93,7 @@ export async function testMailRecipients({
             mailbox: {
               accountId,
               mailboxId,
-              address: "fixture@mail.agentworkplace.dev",
+              address: "fixture@awmail.ai",
             },
           }),
         );

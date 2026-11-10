@@ -35,7 +35,7 @@ async function fixture() {
     mailbox: {
       accountId: "",
       mailboxId: randomUUID(),
-      address: "fixture@mail.agentworkplace.dev",
+      address: "fixture@awmail.ai",
     },
   };
   status.mailbox.accountId = status.accountId;

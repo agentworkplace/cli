@@ -32,7 +32,7 @@ async function fixture() {
   vi.spyOn(AgentWorkplace.prototype, "accountStatus").mockResolvedValue({
     accountId,
     workplaceId,
-    mailbox: { mailboxId, accountId, address: "a@mail.agentworkplace.dev" },
+    mailbox: { mailboxId, accountId, address: "a@awmail.ai" },
   } as Awaited<ReturnType<AgentWorkplace["accountStatus"]>>);
   const run = async (arguments_: string[], stdin?: string) => {
     let stdout = "",

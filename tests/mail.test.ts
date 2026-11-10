@@ -25,7 +25,7 @@ test("mail commands preserve exact JSON streams and old account credential files
   const mailbox = {
     mailboxId: randomUUID(),
     accountId,
-    address: "sample@mail.agentworkplace.dev",
+    address: "sample@awmail.ai",
   };
   await withCredentials(path, (store) =>
     store.write({
@@ -104,7 +104,7 @@ test("signup shows the permanent assigned mailbox on fresh and recovered human o
   const path = await file();
   const accountId = randomUUID();
   const workplaceId = randomUUID();
-  const address = "acornapple03@mail.agentworkplace.dev";
+  const address = "acornapple03@awmail.ai";
   const status = {
     accountId,
     workplaceId,
@@ -443,7 +443,7 @@ test.each(["reply", "reply-all", "forward"])(
       mailbox: {
         mailboxId,
         accountId,
-        address: "agent@mail.agentworkplace.dev",
+        address: "agent@awmail.ai",
       },
     } as Awaited<ReturnType<AgentWorkplace["accountStatus"]>>);
     const compose = vi

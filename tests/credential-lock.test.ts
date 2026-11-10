@@ -31,7 +31,7 @@ async function savedAccount() {
   const mailbox = {
     mailboxId: randomUUID(),
     accountId,
-    address: "sample@mail.agentworkplace.dev",
+    address: "sample@awmail.ai",
   };
   vi.spyOn(AgentWorkplace.prototype, "accountStatus").mockResolvedValue({
     accountId,
