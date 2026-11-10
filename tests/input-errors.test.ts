@@ -41,7 +41,7 @@ async function fixture() {
     mailbox: {
       mailboxId: randomUUID(),
       accountId,
-      address: "sample@mail.agentworkplace.dev",
+      address: "sample@awmail.ai",
     },
   } as Awaited<ReturnType<AgentWorkplace["accountStatus"]>>);
   return { directory, credentials };
