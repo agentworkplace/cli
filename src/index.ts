@@ -4,6 +4,7 @@ import { createRequire } from "node:module";
 
 import { OutputWriteError } from "./errors.js";
 import { runCli } from "./program.js";
+import { startUpdateCheck } from "./update-check.js";
 
 interface PackageMetadata {
   version: string;
@@ -28,8 +29,16 @@ process.stdout.on("error", (error: NodeJS.ErrnoException) => {
 });
 process.stderr.on("error", recordFailure);
 
-process.exitCode = await runCli(process.argv.slice(2), {
+const arguments_ = process.argv.slice(2);
+// Runs beside the command; the notice follows the command's own output.
+const updateCheck = startUpdateCheck({
+  version: packageMetadata.version,
+  arguments: arguments_,
+  env: process.env,
+});
+process.exitCode = await runCli(arguments_, {
   version: packageMetadata.version,
   outputClosed: outputClosed.signal,
   outputFailure: () => outputFailure,
 });
+await updateCheck?.finish((text) => process.stderr.write(text));

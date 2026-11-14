@@ -70,7 +70,9 @@ const accountStatus = {
     storageLimit: "5 GB",
   },
 };
+const userAgents = [];
 const server = createServer((request, response) => {
+  userAgents.push(request.headers["user-agent"]);
   response.setHeader("content-type", "application/json");
   response.setHeader("X-Request-ID", request.headers["x-request-id"]);
   if (
@@ -138,6 +140,11 @@ try {
   });
   const [code] = await once(child, "close");
   assert.equal(code, 0);
+  // The installed CLI names itself and its SDK on every API request.
+  assert.match(
+    userAgents.at(-1) ?? "",
+    /^agent-workplace-cli\/\d+\.\d+\.\d+ agent-workplace-sdk\/\d+\.\d+\.\d+$/,
+  );
   assert.equal(stderr, "");
   assert.deepEqual(JSON.parse(stdout), accountStatus);
 

@@ -189,6 +189,9 @@ describe("agent-workplace CLI", () => {
           message: "Invalid response",
           status: 200,
           code: "invalid_response",
+          hint: expect.stringContaining(
+            "may be older than the API; update with npm i -g agent-workplace@latest",
+          ),
         },
       });
     });
