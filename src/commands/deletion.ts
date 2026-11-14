@@ -1,6 +1,6 @@
 import { readPrivateReceipt } from "../private-receipt.js";
 import { AgentWorkplace, type DeletionStatus } from "@agent-workplace/sdk";
-import { productionApiOrigin } from "../client.js";
+import { cliUserAgent, productionApiOrigin } from "../client.js";
 import { accessOrigin } from "../credentials.js";
 import { CliConfigurationError } from "../errors.js";
 import type { WriteOutput } from "../output.js";
@@ -62,7 +62,8 @@ export async function executeDeletionStatus(options: {
     throw invalid();
   }
   const client =
-    options.createClient?.(origin) ?? new AgentWorkplace({ baseUrl: origin });
+    options.createClient?.(origin) ??
+    new AgentWorkplace({ baseUrl: origin, userAgent: cliUserAgent });
   const result: DeletionStatus = await client.workplaceDeletionStatus(proof);
   // Select only the status contract; never echo imported identities or proof.
   const output = {

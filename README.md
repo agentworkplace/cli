@@ -18,7 +18,7 @@ Command-line access to Agent Workplace for humans and externally operated agents
 > Agent Workplace is actively evolving. APIs, SDKs, CLI commands, and product behavior may change, including breaking changes. Check the [product changelog](https://agentworkplace.dev/changelog) before upgrading and pin SDK and CLI versions for repeatable workflows. Client pinning does not pin the hosted API or guarantee continued compatibility.
 
 ```sh
-npm install --global agent-workplace@0.14.0
+npm install --global agent-workplace@0.15.0
 agent-workplace --help
 agent-workplace docs search "signup"
 agent-workplace docs /documentation/guides/send-mail
@@ -34,6 +34,10 @@ an environment setting for another origin is rejected before a request.
 guide or generated API reference Markdown by canonical path. It works before
 signup and never reads account credentials. Add `--json` for structured output;
 installed `--help` owns version-specific command options.
+
+The CLI doesn't update itself. It prints a one-line notice on stderr when a newer
+release is out; update with `npm install --global agent-workplace@latest`, and set
+`AGENT_WORKPLACE_NO_UPDATE_CHECK=1` to turn the daily check off.
 
 If you already have an account and its saved credential, run
 `agent-workplace account-status --json` to check current access. Otherwise, follow

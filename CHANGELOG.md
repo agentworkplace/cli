@@ -1,5 +1,17 @@
 # agent-workplace
 
+## 0.15.0
+
+### Minor Changes
+
+- The CLI now tells you when a newer release is out. Once a day it asks npm for the latest release in a background process, so no command waits, and the next command prints one line on stderr after its own output, at most once a day per release. It never changes stdout or the exit status, and it's off with `--json`, `--help` and `--version`, in CI, and with `AGENT_WORKPLACE_NO_UPDATE_CHECK=1` or `NO_UPDATE_NOTIFIER`. A failure with `invalid_response`, a successful API answer this release can't read, now has a hint to update. API requests name the CLI in `User-Agent` as `agent-workplace-cli/<version>`.
+
+### Patch Changes
+
+- Updated dependencies
+- Updated dependencies
+  - @agent-workplace/sdk@0.18.0
+
 ## 0.14.0
 
 ### Minor Changes

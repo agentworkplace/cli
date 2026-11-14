@@ -4,6 +4,7 @@ import {
   AgentWorkplaceNetworkError,
   DocumentationError,
 } from "@agent-workplace/sdk";
+import { cliVersion } from "./client.js";
 import { OperationNotCompletedError } from "./outcomes.js";
 
 /** A failure this CLI found itself, before or instead of an API response. */
@@ -96,6 +97,14 @@ function nextStep(
   { operation, statusRead }: PresentationContext,
 ) {
   const again = operation ? ", then use a new --operation path" : "";
+  // The API answered successfully in a form this release can't read, which a
+  // newer API causes; the request may have taken effect.
+  if (error.code === "invalid_response")
+    return `This CLI (${cliVersion}) may be older than the API; update with npm i -g agent-workplace@latest, then ${
+      operation
+        ? "repeat with the same --operation, which can't apply twice"
+        : "check the result before repeating the command"
+    }`;
   if (error.status === 401)
     return "The key is invalid or revoked; check --credentials, or ask an administrator to recover this account's keys";
   if (error.code === "not_found")
