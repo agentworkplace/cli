@@ -63,8 +63,8 @@ test("--account and the older --account-id select the same target", async () => 
       stderr: "",
     });
   expect(keys.mock.calls.map((call) => call.slice(1))).toEqual([
-    [target],
-    [target],
+    [target, { include: "scopes" }],
+    [target, { include: "scopes" }],
   ]);
   expect(
     await f.run([

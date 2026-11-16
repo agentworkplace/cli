@@ -18,7 +18,7 @@ Command-line access to Agent Workplace for humans and externally operated agents
 > Agent Workplace is actively evolving. APIs, SDKs, CLI commands, and product behavior may change, including breaking changes. Check the [product changelog](https://agentworkplace.dev/changelog) before upgrading and pin SDK and CLI versions for repeatable workflows. Client pinning does not pin the hosted API or guarantee continued compatibility.
 
 ```sh
-npm install --global agent-workplace@0.15.0
+npm install --global agent-workplace@0.16.0
 agent-workplace --help
 agent-workplace docs search "signup"
 agent-workplace docs /documentation/guides/send-mail
@@ -51,7 +51,8 @@ dedicated account key instead of using the default credential file; commands
 that save credential state refuse it. See the
 [CLI reference](https://docs.agentworkplace.dev/documentation/integrations/cli#key-from-the-environment).
 Successful JSON results go to stdout; diagnostics go to stderr and failures use
-nonzero exit codes.
+nonzero exit codes. A command that uses a deprecated API operation warns once on
+stderr and otherwise behaves as usual.
 
 See the [documentation](https://docs.agentworkplace.dev) for Mail, Files, Billing,
 permissions and recovery. API availability and access are controlled by the hosted

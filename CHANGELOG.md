@@ -1,5 +1,20 @@
 # agent-workplace
 
+## 0.16.0
+
+### Minor Changes
+
+- Warn on stderr, once per operation, when the API says an operation a command used is deprecated, with its sunset date and announcement link. With `--json` the warning is one `{"warning":{"code":"deprecated_operation",...}}` line on stderr. Stdout and exit codes are unchanged. Programmatic callers' `createProductClient` now receives a second argument with the `onDeprecation` handler to pass to the SDK client.
+- `create-key --scope <group>` issues a scoped key; repeat `--scope` for several groups, or omit it for an unscoped key. `recover-keys` always issues an unscoped key. `keys` now shows each key's `scopes`, `null` for an unscoped key. A scoped key can run commands within its groups and rotate itself with `rotate-key`; creating, listing and recovering keys needs an unscoped key.
+- Mailbox addresses can change. The SDK adds `changeMailboxAddress(authorization, mailboxId, { localPart, expectedAddress })`, and `listMailboxes` and `getMailbox` accept `include: "addressHistory"` to add `previousAddresses` (every earlier address, newest first) and `addressChangesRemaining`. The CLI adds `mail change-address <name>` (`--mailbox`, `--expect`) and `--history` on `mail address` and `mail mailboxes`. Earlier addresses keep receiving into the same Mailbox, mail is never sent from them, and no other Mailbox can claim them. Each Mailbox can change to a new name at most 3 times; switching back to an earlier name is free. `previousAddress` is now the most recent earlier address. Servers that predate address changes reject `include` and the change request.
+
+### Patch Changes
+
+- Updated dependencies
+- Updated dependencies
+- Updated dependencies
+  - @agent-workplace/sdk@0.19.0
+
 ## 0.15.0
 
 ### Minor Changes

@@ -953,3 +953,98 @@ test("Mail operation status can be read by ID without an original receipt", asyn
   });
   expect(read).toHaveBeenCalledWith({ apiKey: "private" }, operationId);
 });
+test("change-address reads the current address, then changes it with that expectation", async () => {
+  const path = await file();
+  const accountId = randomUUID(),
+    workplaceId = randomUUID();
+  const mailbox = {
+    mailboxId: randomUUID(),
+    accountId,
+    address: "first-name@awmail.ai",
+  };
+  await withCredentials(path, (store) =>
+    store.write({
+      version: 1,
+      kind: "account",
+      origin: "https://api.example.test",
+      credential: { accountId, workplaceId, key: "private" },
+    }),
+  );
+  vi.spyOn(AgentWorkplace.prototype, "accountStatus").mockResolvedValue({
+    accountId,
+    workplaceId,
+    mailbox,
+  } as Awaited<ReturnType<AgentWorkplace["accountStatus"]>>);
+  const read = vi
+    .spyOn(AgentWorkplace.prototype, "getMailbox")
+    .mockResolvedValue(mailbox);
+  const changed = {
+    ...mailbox,
+    address: "second-name@awmail.ai",
+    previousAddress: mailbox.address,
+    previousAddresses: [mailbox.address],
+    addressChangesRemaining: 2,
+  };
+  const change = vi
+    .spyOn(AgentWorkplace.prototype, "changeMailboxAddress")
+    .mockResolvedValue(changed);
+  let stdout = "",
+    stderr = "";
+  const run = (args: string[]) => {
+    stdout = "";
+    stderr = "";
+    return runCli(["--credentials", path, ...args], {
+      version: "0.0.0",
+      writeOut: (value) => {
+        stdout += value;
+      },
+      writeErr: (value) => {
+        stderr += value;
+      },
+    });
+  };
+  expect(await run(["mail", "change-address", "second-name", "--json"])).toBe(
+    0,
+  );
+  expect(change).toHaveBeenCalledWith(
+    { apiKey: "private" },
+    mailbox.mailboxId,
+    { localPart: "second-name", expectedAddress: mailbox.address },
+  );
+  expect({ stdout, stderr }).toEqual({
+    stdout: JSON.stringify(changed) + "\n",
+    stderr: "",
+  });
+  await run([
+    "mail",
+    "change-address",
+    "third-name",
+    "--expect",
+    "second-name@awmail.ai",
+    "--json",
+  ]);
+  expect(change).toHaveBeenLastCalledWith(
+    { apiKey: "private" },
+    mailbox.mailboxId,
+    { localPart: "third-name", expectedAddress: "second-name@awmail.ai" },
+  );
+  change.mockRejectedValueOnce(
+    new AgentWorkplaceError("Changes used", {
+      status: 409,
+      code: "address_change_limit",
+    }),
+  );
+  expect(
+    await run(["mail", "change-address", "fourth-name", "--json"]),
+  ).not.toBe(0);
+  expect(stdout).toBe("");
+  expect(stderr).toContain("address_change_limit");
+  read.mockResolvedValue(changed);
+  expect(await run(["mail", "address", "--history", "--json"])).toBe(0);
+  expect(read).toHaveBeenLastCalledWith(
+    { apiKey: "private" },
+    mailbox.mailboxId,
+    { include: "addressHistory" },
+  );
+  expect(stdout).toBe(JSON.stringify(changed) + "\n");
+});

@@ -1,12 +1,18 @@
 import { readPrivateReceipt } from "../private-receipt.js";
 import { AgentWorkplace, type DeletionStatus } from "@agent-workplace/sdk";
-import { cliUserAgent, productionApiOrigin } from "../client.js";
+import {
+  cliUserAgent,
+  constructionOf,
+  productionApiOrigin,
+  type ProductClientConstruction,
+} from "../client.js";
 import { accessOrigin } from "../credentials.js";
 import { CliConfigurationError } from "../errors.js";
 import type { WriteOutput } from "../output.js";
 
 export type CreateDeletionClient = (
   baseUrl: string,
+  construction: ProductClientConstruction,
 ) => Pick<AgentWorkplace, "workplaceDeletionStatus">;
 const invalid = () =>
   new CliConfigurationError(
@@ -19,6 +25,7 @@ export async function executeDeletionStatus(options: {
   json: boolean;
   write: WriteOutput;
   createClient?: CreateDeletionClient;
+  onDeprecation?: ProductClientConstruction["onDeprecation"];
 }) {
   const origin = accessOrigin(options.baseUrl ?? productionApiOrigin);
   const text = await readPrivateReceipt(
@@ -62,8 +69,12 @@ export async function executeDeletionStatus(options: {
     throw invalid();
   }
   const client =
-    options.createClient?.(origin) ??
-    new AgentWorkplace({ baseUrl: origin, userAgent: cliUserAgent });
+    options.createClient?.(origin, constructionOf(options)) ??
+    new AgentWorkplace({
+      baseUrl: origin,
+      userAgent: cliUserAgent,
+      ...constructionOf(options),
+    });
   const result: DeletionStatus = await client.workplaceDeletionStatus(proof);
   // Select only the status contract; never echo imported identities or proof.
   const output = {

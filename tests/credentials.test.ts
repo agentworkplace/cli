@@ -87,6 +87,7 @@ describe("credential persistence", () => {
     expect(exitCode).toBe(1);
     expect(factory).toHaveBeenCalledExactlyOnceWith(
       "https://api.agentworkplace.dev",
+      { onDeprecation: expect.any(Function) },
     );
     expect(signup).toHaveBeenCalledTimes(1);
   });
@@ -156,7 +157,9 @@ describe("credential persistence", () => {
       },
     );
     expect(exitCode).toBe(1);
-    expect(factory).toHaveBeenCalledExactlyOnceWith(state.origin);
+    expect(factory).toHaveBeenCalledExactlyOnceWith(state.origin, {
+      onDeprecation: expect.any(Function),
+    });
     expect(signup).toHaveBeenCalledTimes(1);
     expect(await readFile(file, "utf8")).toBe(before);
   });
@@ -234,7 +237,9 @@ describe("credential persistence", () => {
       },
     );
     expect(exitCode).toBe(0);
-    expect(factory).toHaveBeenCalledExactlyOnceWith(state.origin);
+    expect(factory).toHaveBeenCalledExactlyOnceWith(state.origin, {
+      onDeprecation: expect.any(Function),
+    });
     expect(accountStatus).toHaveBeenCalledExactlyOnceWith({
       apiKey: credential.key,
     });

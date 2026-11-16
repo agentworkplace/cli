@@ -156,6 +156,7 @@ describe("agent-workplace CLI", () => {
       });
       expect(client.createProductClient).toHaveBeenCalledExactlyOnceWith(
         origin,
+        { onDeprecation: expect.any(Function) },
       );
       expect(client.accountStatus).toHaveBeenCalledTimes(1);
     });

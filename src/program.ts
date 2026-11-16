@@ -93,6 +93,7 @@ import {
   executeMailSenderBlock,
   executeMailSenderBlocks,
   executeMailAddress,
+  executeMailAddressChange,
   executeMailboxList,
   executeMailSend,
   executeMailCompose,
@@ -139,7 +140,7 @@ import {
   waitParser,
 } from "./arguments.js";
 import { CommandCanceled } from "./errors.js";
-import { writeError, writeUsageError } from "./output.js";
+import { deprecationWarnings, writeError, writeUsageError } from "./output.js";
 import type { WriteOutput } from "./output.js";
 
 interface GlobalOptions {
@@ -192,6 +193,7 @@ export async function runCli(
   const requestsJson = (
     terminator === -1 ? arguments_ : arguments_.slice(0, terminator)
   ).includes("--json");
+  const onDeprecation = deprecationWarnings(requestsJson, writeErr);
 
   const program = new Command()
     .name("agent-workplace")
@@ -228,6 +230,7 @@ export async function runCli(
     baseUrl: apiUrlOverride,
     apiKey: environmentApiKey,
     createProductClient: options.createProductClient,
+    onDeprecation,
   });
 
   const chat = program
@@ -621,6 +624,7 @@ export async function runCli(
         await executeOwnerEmailStatus({
           baseUrl: apiUrlOverride,
           createProductClient: options.createProductClient,
+          onDeprecation,
           receipt: input.receipt,
           input: options.input ?? process.stdin,
           json: input.json ?? false,
@@ -653,6 +657,7 @@ export async function runCli(
           write: writeOut,
           createClient:
             options.createProductClient ?? options.createDeletionClient,
+          onDeprecation,
         });
       } catch (error) {
         failure = { error, json: input.json ?? false };
@@ -1363,13 +1368,24 @@ export async function runCli(
   }
 
   for (const action of ["create-key", "recover-keys"] as const) {
-    program
+    const command = program
       .command(action)
       .description(
         action === "create-key"
           ? "Create a named key and save it privately"
           : "Revoke all target keys and save one replacement",
-      )
+      );
+    // Recovery always issues an unscoped key.
+    if (action === "create-key")
+      command.option(
+        "--scope <group>",
+        "Limit the key to a scope group (account, workplace, invitations, mail, files, notifications, billing, feedback, chat); repeat for multiple, omit for an unscoped key",
+        (value: string, prior: string[] | undefined) => [
+          ...(prior ?? []),
+          value,
+        ],
+      );
+    command
       .requiredOption("--name <name>", "Key name")
       .requiredOption(
         "--save-to <path>",
@@ -1388,6 +1404,7 @@ export async function runCli(
           name: string;
           saveTo: string;
           accountId?: string;
+          scope?: string[];
           json?: boolean;
         }) => {
           try {
@@ -2829,29 +2846,74 @@ export async function runCli(
     .command("address")
     .description("Show your Mailbox address, or another authorized Mailbox's")
     .option("--mailbox <id>", "Read a specific authorized mailbox")
+    .option(
+      "--history",
+      "Include earlier addresses that still receive, and remaining changes",
+    )
     .option("--json", "output machine-readable JSON")
-    .action(async (commandOptions: { mailbox?: string; json?: boolean }) => {
-      try {
-        await executeMailAddress({
-          ...productOptions(),
-          ...commandOptions,
-          json: commandOptions.json ?? false,
-          write: writeOut,
-        });
-      } catch (error) {
-        failure = { error, json: commandOptions.json ?? false };
-      }
-    });
+    .action(
+      async (commandOptions: {
+        mailbox?: string;
+        history?: boolean;
+        json?: boolean;
+      }) => {
+        try {
+          await executeMailAddress({
+            ...productOptions(),
+            ...commandOptions,
+            json: commandOptions.json ?? false,
+            write: writeOut,
+          });
+        } catch (error) {
+          failure = { error, json: commandOptions.json ?? false };
+        }
+      },
+    );
+  mail
+    .command("change-address")
+    .description(
+      "Change your Mailbox address, or another authorized Mailbox's. Earlier addresses keep receiving; at most 3 new names per Mailbox, and switching back to an earlier name is free",
+    )
+    .argument("<name>", "New name, or an earlier name to switch back to")
+    .option("--mailbox <id>", "Change a specific authorized mailbox")
+    .option(
+      "--expect <address>",
+      "Current address you expect to replace (default: read it first)",
+    )
+    .option("--json", "output machine-readable JSON")
+    .action(
+      async (
+        name: string,
+        commandOptions: { mailbox?: string; expect?: string; json?: boolean },
+      ) => {
+        try {
+          await executeMailAddressChange({
+            ...productOptions(),
+            ...commandOptions,
+            name,
+            json: commandOptions.json ?? false,
+            write: writeOut,
+          });
+        } catch (error) {
+          failure = { error, json: commandOptions.json ?? false };
+        }
+      },
+    );
   mail
     .command("mailboxes")
     .description("List the workplace's Mailbox addresses")
     .option("--after <id>", "Page after a mailbox ID")
     .option("--limit <count>", "Page size, 1–100", limitParser(100))
+    .option(
+      "--history",
+      "Include earlier addresses that still receive, and remaining changes",
+    )
     .option("--json", "output machine-readable JSON")
     .action(
       async (commandOptions: {
         after?: string;
         limit?: string;
+        history?: boolean;
         json?: boolean;
       }) => {
         try {
