@@ -80,7 +80,9 @@ test("stdin status emits only exact public outcome and never private receipt fie
   expect(result.stderr).toBe("");
   expect(result.stdout).toBe(`${JSON.stringify(status)}\n`);
   expect(result.request).toHaveBeenCalledWith(receipt.proof);
-  expect(result.createProductClient).toHaveBeenCalledWith(origin);
+  expect(result.createProductClient).toHaveBeenCalledWith(origin, {
+    onDeprecation: expect.any(Function),
+  });
   const human = await invoke("-", JSON.stringify(receipt), origin, false);
   expect(human.stdout).toBe(
     `Owner email: completed\nOperation expires: ${status.operation.expiresAt}\nReceipt expires: ${status.operation.receiptExpiresAt}\n`,
@@ -128,6 +130,7 @@ test("production receipt uses the default and a staging receipt cannot redirect 
   expect(production.exitCode).toBe(0);
   expect(production.createProductClient).toHaveBeenCalledWith(
     productionReceipt.apiOrigin,
+    { onDeprecation: expect.any(Function) },
   );
   const staging = await invoke("-", JSON.stringify(receipt), null);
   expect(staging.exitCode).toBe(1);

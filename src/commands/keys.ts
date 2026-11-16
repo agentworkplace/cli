@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import {
   AgentWorkplaceError,
   type AccountAccessStatus,
+  type AgentKeyScopes,
   type AgentWorkplace,
 } from "@agent-workplace/sdk";
 import { productClient } from "../client.js";
@@ -167,7 +168,10 @@ export async function executeKeyList(
 ) {
   await executeSavedOperation(options, async (client, apiKey, status) => {
     const target = accountId ?? status.accountId;
-    const list = await client.listAgentKeys({ apiKey }, target);
+    // `scopes` is null for an unscoped key.
+    const list = await client.listAgentKeys({ apiKey }, target, {
+      include: "scopes",
+    });
     const current = keyInUse(status, target);
     return {
       ...list,
@@ -267,6 +271,8 @@ export async function executeKeyIssue(
     accountId?: string;
     name: string;
     saveTo: string;
+    /** Scope groups for a created key; recovery always issues an unscoped key. */
+    scope?: string[];
   },
   recovery: boolean,
 ) {
@@ -341,7 +347,14 @@ export async function executeKeyIssue(
       }
       const key = recovery
         ? await client.recoverAgentKeys(authorization, accountId, options.name)
-        : await client.createAgentKey(authorization, accountId, options.name);
+        : await client.createAgentKey(
+            authorization,
+            accountId,
+            options.name,
+            options.scope?.length
+              ? { scopes: options.scope as AgentKeyScopes }
+              : {},
+          );
       const credential = {
         accountId,
         workplaceId: status.workplaceId,

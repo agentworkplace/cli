@@ -66,7 +66,9 @@ test("stdin status emits only exact public outcome and never private receipt fie
   expect(result.stderr).toBe("");
   expect(result.stdout).toBe(`${JSON.stringify(status)}\n`);
   expect(result.request).toHaveBeenCalledWith(receipt.proof);
-  expect(result.createClient).toHaveBeenCalledWith(origin);
+  expect(result.createClient).toHaveBeenCalledWith(origin, {
+    onDeprecation: expect.any(Function),
+  });
   const human = await invoke("-", JSON.stringify(receipt), origin, false);
   expect(human.stdout).toBe(
     `Deletion: deleted\nInitiated: ${status.initiatedAt}\nReceipt expires: ${status.receiptExpiresAt}\n`,
@@ -112,6 +114,7 @@ test("production receipt uses the default and a staging receipt cannot redirect 
   expect(production.exitCode).toBe(0);
   expect(production.createClient).toHaveBeenCalledWith(
     productionReceipt.apiOrigin,
+    { onDeprecation: expect.any(Function) },
   );
   const staging = await invoke("-", JSON.stringify(receipt), null);
   expect(staging.exitCode).toBe(1);

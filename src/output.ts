@@ -53,3 +53,50 @@ export function writeUsageError(
   const text = message.replace(/^error: /, "").trimEnd();
   write(`${JSON.stringify({ error: { message: text, code: "usage" } })}\n`);
 }
+
+interface DeprecationNotice {
+  method: string;
+  path: string;
+  deprecatedAt: Date;
+  sunsetAt?: Date;
+  link?: string;
+}
+
+/**
+ * Warn on stderr, once per operation, that the API deprecated an operation
+ * this command used. The command's stdout and exit code are unchanged; with
+ * `--json` the warning is one JSON line, like failures.
+ */
+export function deprecationWarnings(json: boolean, write: WriteOutput) {
+  const reported = new Set<string>();
+  return (notice: DeprecationNotice) => {
+    const operation = `${notice.method} ${notice.path}`;
+    if (reported.has(operation)) return;
+    reported.add(operation);
+    if (json) {
+      write(
+        `${JSON.stringify({
+          warning: {
+            code: "deprecated_operation",
+            operation,
+            deprecatedAt: notice.deprecatedAt.toISOString(),
+            ...(notice.sunsetAt === undefined
+              ? {}
+              : { sunsetAt: notice.sunsetAt.toISOString() }),
+            ...(notice.link === undefined ? {} : { link: notice.link }),
+          },
+        })}\n`,
+      );
+      return;
+    }
+    const day = (value: Date) => value.toISOString().slice(0, 10);
+    write(
+      `Warning: ${operation} is deprecated since ${day(notice.deprecatedAt)}` +
+        (notice.sunsetAt === undefined
+          ? ""
+          : ` and may stop working after ${day(notice.sunsetAt)}`) +
+        ". Update this CLI or your integration" +
+        (notice.link === undefined ? ".\n" : `; see ${notice.link}\n`),
+    );
+  };
+}

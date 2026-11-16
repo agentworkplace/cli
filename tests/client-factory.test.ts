@@ -140,7 +140,9 @@ test.each(commands.map((args) => ({ name: args.join(" "), args })))(
       },
     );
     expect(exitCode).toBe(1);
-    expect(factory).toHaveBeenCalledExactlyOnceWith(origin);
+    expect(factory).toHaveBeenCalledExactlyOnceWith(origin, {
+      onDeprecation: expect.any(Function),
+    });
     expect(request).toHaveBeenCalledTimes(1);
     expect(defaultFetch).not.toHaveBeenCalled();
     expect(stdout).toBe("");

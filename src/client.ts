@@ -1,5 +1,8 @@
 import { createRequire } from "node:module";
-import { AgentWorkplace } from "@agent-workplace/sdk";
+import {
+  AgentWorkplace,
+  type AgentWorkplaceDeprecation,
+} from "@agent-workplace/sdk";
 
 /** This CLI release, as installed. */
 export const { version: cliVersion } = createRequire(import.meta.url)(
@@ -13,10 +16,19 @@ export const productionApiOrigin = "https://api.agentworkplace.dev";
 /** Trusted only as the partner of the production API for invitation links. */
 export const productionDashboardOrigin = "https://app.agentworkplace.dev";
 
-/** Optional SDK construction for callers of the programmatic CLI entry. */
-export type CreateProductClient = (baseUrl: string) => AgentWorkplace;
+/** SDK behavior the CLI needs from every product client it uses. */
+export interface ProductClientConstruction {
+  /** Reports deprecation notices on stderr; pass it to the SDK client. */
+  onDeprecation?: (deprecation: AgentWorkplaceDeprecation) => void;
+}
 
-export interface ProductClientOptions {
+/** Optional SDK construction for callers of the programmatic CLI entry. */
+export type CreateProductClient = (
+  baseUrl: string,
+  construction: ProductClientConstruction,
+) => AgentWorkplace;
+
+export interface ProductClientOptions extends ProductClientConstruction {
   createProductClient?: CreateProductClient | undefined;
 }
 
@@ -24,7 +36,20 @@ export function productClient(
   options: ProductClientOptions,
   baseUrl: string,
 ): AgentWorkplace {
+  const construction = constructionOf(options);
   if (options.createProductClient !== undefined)
-    return options.createProductClient(baseUrl);
-  return new AgentWorkplace({ baseUrl, userAgent: cliUserAgent });
+    return options.createProductClient(baseUrl, construction);
+  return new AgentWorkplace({
+    baseUrl,
+    userAgent: cliUserAgent,
+    ...construction,
+  });
+}
+
+export function constructionOf(
+  options: ProductClientConstruction,
+): ProductClientConstruction {
+  return options.onDeprecation === undefined
+    ? {}
+    : { onDeprecation: options.onDeprecation };
 }

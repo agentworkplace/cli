@@ -30,11 +30,16 @@ function defaultSubject(
 }
 
 export async function executeMailAddress(
-  options: AccessCommandOptions & { mailbox?: string },
+  options: AccessCommandOptions & { mailbox?: string; history?: boolean },
 ) {
   await executeSavedOperation(options, async (client, key, status) => {
-    if (options.mailbox)
-      return client.getMailbox({ apiKey: key }, options.mailbox);
+    const mailboxId = options.mailbox ?? status.mailbox?.mailboxId;
+    if (options.mailbox || (options.history && mailboxId))
+      return options.history
+        ? client.getMailbox({ apiKey: key }, mailboxId!, {
+            include: "addressHistory",
+          })
+        : client.getMailbox({ apiKey: key }, mailboxId!);
     if (!status.mailbox)
       throw new CliConfigurationError(
         "This server did not return mailbox discovery; do not repeat signup or create another account",
@@ -43,14 +48,51 @@ export async function executeMailAddress(
   });
 }
 export async function executeMailboxList(
-  options: AccessCommandOptions & { after?: string; limit?: number },
+  options: AccessCommandOptions & {
+    after?: string;
+    limit?: number;
+    history?: boolean;
+  },
 ) {
   await executeSavedOperation(options, (client, key) =>
-    client.listMailboxes(
-      { apiKey: key },
-      { after: options.after, limit: options.limit },
-    ),
+    options.history
+      ? client.listMailboxes(
+          { apiKey: key },
+          {
+            after: options.after,
+            limit: options.limit,
+            include: "addressHistory",
+          },
+        )
+      : client.listMailboxes(
+          { apiKey: key },
+          { after: options.after, limit: options.limit },
+        ),
   );
+}
+/** Changes your Mailbox's address, or another authorized Mailbox's. The
+ * expected current address defaults to a fresh read of that Mailbox. */
+export async function executeMailAddressChange(
+  options: AccessCommandOptions & {
+    name: string;
+    mailbox?: string;
+    expect?: string;
+  },
+) {
+  await executeSavedOperation(options, async (client, key, status) => {
+    const mailboxId = options.mailbox ?? status.mailbox?.mailboxId;
+    if (!mailboxId)
+      throw new CliConfigurationError(
+        "This server did not return mailbox discovery; pass --mailbox",
+      );
+    const expectedAddress =
+      options.expect ??
+      (await client.getMailbox({ apiKey: key }, mailboxId)).address;
+    return client.changeMailboxAddress({ apiKey: key }, mailboxId, {
+      localPart: options.name,
+      expectedAddress,
+    });
+  });
 }
 
 export async function executeMailSend(
