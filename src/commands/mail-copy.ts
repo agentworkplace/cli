@@ -5,6 +5,7 @@ import {
 } from "@agent-workplace/sdk";
 import { accessOrigin } from "../credentials.js";
 import { withPrivateJsonFile } from "../private-file.js";
+import { uploadDeadline } from "../files-operation.js";
 import { CliConfigurationError, changedOperationMessage } from "../errors.js";
 import {
   executeCheckedOperation,
@@ -125,7 +126,7 @@ export async function executeMailCopy(
             {
               workplaceId: status.workplaceId,
               operationId: randomUUID(),
-              expiresAt: new Date(Date.now() + 60 * 60000).toISOString(),
+              expiresAt: uploadDeadline(),
               source: {
                 messageId: options.message,
                 attachmentId: options.attachment,

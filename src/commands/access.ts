@@ -53,7 +53,9 @@ function signupOutput(status: AccessStatus, json: boolean, write: WriteOutput) {
         ? `Mailbox address: ${status.mailbox.address}`
         : "Mailbox address: unavailable; check account-status or mail address",
       ...(status.mailbox
-        ? ["This address is permanent and cannot be renamed."]
+        ? [
+            "Change it with `mail change-address`; earlier addresses keep receiving.",
+          ]
         : []),
       `Account ID: ${status.accountId}`,
       `Workplace ID: ${status.workplaceId}`,

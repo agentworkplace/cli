@@ -485,16 +485,103 @@ describe("cancelled rotations", () => {
     await expect(executeKeyRotation(f.options)).rejects.toThrow(
       "Lost response",
     );
-    f.status.mockRejectedValueOnce(
-      new AgentWorkplaceError("Rejected", {
-        status: 401,
-        code: "access_denied",
-      }),
-    );
+    f.status
+      .mockRejectedValueOnce(
+        new AgentWorkplaceError("Rejected", {
+          status: 401,
+          code: "access_denied",
+        }),
+      )
+      .mockRejectedValueOnce(new Error("Lost response"));
     await expect(executeKeyRotation(f.options)).rejects.toThrow("Rejected");
     const state = await read(f.file);
     expect(state.credential?.key).toBe("new-secret");
     expect(state.rotation?.phase).toBe("saved");
+  });
+
+  describe("with a scoped previous key, which can't list keys", () => {
+    const interrupted = async () => {
+      const f = await fixture(true);
+      vi.spyOn(AgentWorkplace.prototype, "listAgentKeys").mockRejectedValue(
+        new AgentWorkplaceError("Needs an unscoped key", {
+          status: 403,
+          code: "access_denied",
+        }),
+      );
+      f.complete.mockRejectedValueOnce(new Error("Lost response"));
+      await expect(executeKeyRotation(f.options)).rejects.toThrow(
+        "Lost response",
+      );
+      const operationId = (await read(f.file)).rotation!.operationId;
+      f.status.mockRejectedValueOnce(
+        new AgentWorkplaceError("Rejected", {
+          status: 401,
+          code: "access_denied",
+        }),
+      );
+      await expect(executeKeyRotation(f.options)).rejects.toThrow(
+        "finish the rotation with the previous key",
+      );
+      expect(f.status).toHaveBeenLastCalledWith({ apiKey: "old-secret" });
+      const state = await read(f.file);
+      expect(state.credential?.key).toBe("old-secret");
+      expect(state.rotation).toEqual({
+        operationId,
+        name: "Rotation",
+        phase: "issuing",
+      });
+      return { ...f, operationId };
+    };
+
+    it("goes back to the previous key and reissues under the same operation", async () => {
+      const f = await interrupted();
+      f.begin.mockImplementationOnce(async (_key, operationId) => ({
+        operationId,
+        predecessorId: randomUUID(),
+        id: randomUUID(),
+        key: "newer-secret",
+      }));
+      await executeKeyRotation(f.options);
+      expect(f.begin).toHaveBeenLastCalledWith(
+        "old-secret",
+        f.operationId,
+        "Rotation",
+      );
+      const state = await read(f.file);
+      expect(state.credential?.key).toBe("newer-secret");
+      expect(state.rotation).toBeUndefined();
+    });
+
+    it("keeps the previous key when the cancelled operation is refused", async () => {
+      const f = await interrupted();
+      f.begin.mockRejectedValueOnce(conflict());
+      await expect(executeKeyRotation(f.options)).rejects.toThrow(
+        "run rotate-key again",
+      );
+      const state = await read(f.file);
+      expect(state.credential?.key).toBe("old-secret");
+      expect(state.rotation).toBeUndefined();
+    });
+
+    it("keeps the candidate when the previous key is refused too", async () => {
+      const f = await fixture(true);
+      vi.spyOn(AgentWorkplace.prototype, "listAgentKeys").mockRejectedValue(
+        new Error("Needs an unscoped key"),
+      );
+      f.complete.mockRejectedValueOnce(new Error("Lost response"));
+      await expect(executeKeyRotation(f.options)).rejects.toThrow(
+        "Lost response",
+      );
+      const refused = new AgentWorkplaceError("Rejected", {
+        status: 401,
+        code: "access_denied",
+      });
+      f.status.mockRejectedValueOnce(refused).mockRejectedValueOnce(refused);
+      await expect(executeKeyRotation(f.options)).rejects.toThrow("Rejected");
+      const state = await read(f.file);
+      expect(state.credential?.key).toBe("new-secret");
+      expect(state.rotation?.phase).toBe("saved");
+    });
   });
 
   it("clears a refused issuance so a rerun starts a fresh operation", async () => {

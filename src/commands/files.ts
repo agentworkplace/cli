@@ -26,6 +26,7 @@ import {
   withFilesCopyOperation,
   withFilesDeletionOperation,
   withFileUploadSource,
+  uploadDeadline,
 } from "../files-operation.js";
 import { CliConfigurationError, changedOperationMessage } from "../errors.js";
 import type { WriteOutput } from "../output.js";
@@ -140,7 +141,7 @@ export async function executeFilesPut(
                       (options.text
                         ? "text/plain; charset=utf-8"
                         : "application/octet-stream"),
-                    expiresAt: new Date(Date.now() + 60 * 60000).toISOString(),
+                    expiresAt: uploadDeadline(),
                   },
                   source,
                 ),
@@ -526,9 +527,7 @@ export async function executeFilesCopy(
                   parentId: options.parent === "root" ? null : options.parent,
                 }),
           },
-          expiresAt:
-            saved?.request.expiresAt ??
-            new Date(Date.now() + 55 * 60_000).toISOString(),
+          expiresAt: saved?.request.expiresAt ?? uploadDeadline(),
         });
         if (saved && JSON.stringify(saved.request) !== JSON.stringify(request))
           throw new CliConfigurationError(retryOnlyMessage);

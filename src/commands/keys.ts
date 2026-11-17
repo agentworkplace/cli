@@ -66,6 +66,28 @@ export async function executeKeyRotation(
         const unconfirmed =
           !keys ||
           keys.keys.some((item) => item.id === candidateId && item.enabled);
+        // A scoped previous key can't list keys. If it still authenticates, the
+        // rotation never completed, because completion disables it. Go back to
+        // it under the same operation: reissuing replaces a live candidate, and
+        // a cancelled operation is refused and cleared below.
+        if (!keys && !refused) {
+          const previous = await client
+            .accountStatus({ apiKey: predecessorKey })
+            .catch(() => undefined);
+          if (previous?.accountId !== state.credential.accountId) return error;
+          await store.write({
+            ...state,
+            credential: { ...state.credential, key: predecessorKey },
+            rotation: {
+              operationId: rotation.operationId,
+              name: rotation.name,
+              phase: "issuing",
+            },
+          });
+          return new CliConfigurationError(
+            "The saved key was refused; run rotate-key again to finish the rotation with the previous key",
+          );
+        }
         // A refused completion came from the candidate, so it works even though
         // its handoff is over: keep it, and let rotation start again from it.
         if (unconfirmed && !refused) return error;
@@ -297,13 +319,21 @@ export async function executeKeyIssue(
       throw new CliConfigurationError(
         "Saved credential account does not match the API response",
       );
-    const accountId = options.accountId ?? status.accountId;
-    const target = (
-      await client.listParticipants({ apiKey: saved.credential.key })
-    ).participants.find(
-      (p) => p.id === accountId && p.kind === "agent" && p.state === "active",
-    );
-    if (!target)
+    const own =
+      options.accountId === undefined ||
+      options.accountId.toLowerCase() === status.accountId;
+    const accountId = own ? status.accountId : options.accountId!;
+    // The account status above already proves the caller is an active agent.
+    // Listing participants needs the workplace scope, so for the caller it
+    // would only hide the API's own refusal of a scoped key.
+    if (
+      !own &&
+      !(
+        await client.listParticipants({ apiKey: saved.credential.key })
+      ).participants.some(
+        (p) => p.id === accountId && p.kind === "agent" && p.state === "active",
+      )
+    )
       throw new CliConfigurationError(
         "Target is not an active agent in this workplace",
       );
