@@ -231,6 +231,23 @@ test.each(["origin", "workplace"])(
   },
 );
 
+test("a new copy asks for a 55-minute upload deadline, below the API's maximum", async () => {
+  const f = await setup();
+  const before = Date.now();
+  const result = await f.invoke([
+    "--message",
+    f.messageId,
+    "--attachment",
+    f.attachmentId,
+    "--name",
+    "chosen.txt",
+  ]);
+  expect(result.code).toBe(0);
+  const ahead = Date.parse(f.start.mock.calls[0]![1].expiresAt!) - before;
+  expect(ahead).toBeGreaterThanOrEqual(55 * 60_000);
+  expect(ahead).toBeLessThan(55 * 60_000 + 60_000);
+});
+
 test("unsafe receipt appearing after source download prevents destination admission", async () => {
   const f = await setup();
   f.start.mockRestore();

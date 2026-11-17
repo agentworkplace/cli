@@ -1447,7 +1447,7 @@ export async function runCli(
     .description("Publish, read and update shared Files");
   files
     .command("list")
-    .description("List current files, newest first")
+    .description("List current files in a stable order, a page at a time")
     .option("--after <cursor>", "Continue listing")
     .option("--limit <count>", "Page size, 1–100", limitParser(100))
     .option("--json", "output machine-readable JSON")

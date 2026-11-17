@@ -633,3 +633,39 @@ test("files parts preserves exact presence-only JSON through the SDK", async () 
     { workplaceId: f.workplaceId, uploadId },
   );
 });
+
+test("new uploads ask for a 55-minute deadline, below the API's 60-minute maximum", async () => {
+  // The API refuses a deadline more than 60 minutes after its own clock, so a
+  // client asking for exactly 60 fails whenever its clock runs slightly ahead.
+  const f = await fixture(),
+    source = join(f.dir, "source.txt");
+  await writeFile(source, "content");
+  const send = vi
+    .spyOn(AgentWorkplace.prototype, "uploadFileFromSource")
+    .mockResolvedValue({
+      state: "published",
+      uploadId: randomUUID(),
+      fileId: randomUUID(),
+      revisionId: randomUUID(),
+      version: randomUUID(),
+    });
+  for (const command of ["text", "put"]) {
+    const before = Date.now();
+    const operation = join(f.dir, `${command}.json`);
+    const result = await f.run([
+      command,
+      "--source-file",
+      source,
+      "--operation",
+      operation,
+      "--name",
+      `${command}.txt`,
+    ]);
+    expect(result.code).toBe(0);
+    const saved = JSON.parse(await readFile(operation, "utf8")).request;
+    const ahead = Date.parse(saved.expiresAt) - before;
+    expect(ahead).toBeGreaterThanOrEqual(55 * 60_000);
+    expect(ahead).toBeLessThan(55 * 60_000 + 60_000);
+  }
+  expect(send).toHaveBeenCalledTimes(2);
+});

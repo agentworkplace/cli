@@ -100,7 +100,7 @@ test("CLI keeps bootstrap proof before request, scrubs a conflicted label and ex
   });
 });
 
-test("signup shows the permanent assigned mailbox on fresh and recovered human output without changing JSON", async () => {
+test("signup shows the assigned mailbox on fresh and recovered human output without changing JSON", async () => {
   const path = await file();
   const accountId = randomUUID();
   const workplaceId = randomUUID();
@@ -143,7 +143,7 @@ test("signup shows the permanent assigned mailbox on fresh and recovered human o
   await executeSignup(options);
   const human = write.mock.calls[0]![0] as string;
   expect(human).toContain(
-    `Mailbox address: ${address}\nThis address is permanent and cannot be renamed.`,
+    `Mailbox address: ${address}\nChange it with \`mail change-address\`; earlier addresses keep receiving.`,
   );
   expect(human).not.toContain("private-signup-key");
   expect(human).not.toContain("bootstrapProof");

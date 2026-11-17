@@ -1,5 +1,14 @@
 # agent-workplace
 
+## 0.16.1
+
+### Patch Changes
+
+- `rotate-key` can now recover an interrupted rotation of a scoped key. When the saved replacement is refused, a scoped previous key can't list keys to prove the replacement is gone, so the CLI used to keep the refused key. It now goes back to the previous key while that key still works, and the next `rotate-key` finishes the rotation. `signup` no longer says the Mailbox address is permanent: it can be changed with `mail change-address`. `files list` help no longer claims newest-first order.
+- `files put`, `files text` and `mail copy` now ask for a 55-minute upload deadline instead of 60. The API refuses a deadline more than 60 minutes after its own clock, so a computer whose clock ran slightly ahead got `invalid_input` on every new upload. `create-key` and `recover-keys` for your own account no longer list participants first, so a scoped key now gets the API's `unscoped_key_required` refusal instead of a misleading request for the `workplace` scope.
+- Updated dependencies
+  - @agent-workplace/sdk@0.20.0
+
 ## 0.16.0
 
 ### Minor Changes

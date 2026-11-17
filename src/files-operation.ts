@@ -14,6 +14,14 @@ import { accessOrigin } from "./credentials.js";
 import { CliConfigurationError } from "./errors.js";
 import { withPrivateJsonFile } from "./private-file.js";
 
+/** The API admits an upload or copy deadline at most 60 minutes after its own
+ * clock. Asking for 55 leaves room for a client clock that runs ahead. */
+export const uploadWindowMs = 55 * 60_000;
+/** The deadline a new upload, copy or Mail attachment copy saves and replays. */
+export function uploadDeadline(now = Date.now()) {
+  return new Date(now + uploadWindowMs).toISOString();
+}
+
 /** One open regular-file identity per invocation. Reopening on a retry is safe
  * only when every byte still matches the saved SDK manifest. */
 export async function withFileUploadSource<T>(
